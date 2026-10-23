@@ -169,7 +169,8 @@ int main()
 
 	DisplayOptions notes = off;
 	notes.footnotes = true;
-	const VerseText* j11 = find(lib.Chapter("MBTEST", "John", 1, notes), 1);
+	auto john1 = lib.Chapter("MBTEST", "John", 1, notes);	// keep it: find() points into it
+	const VerseText* j11 = find(john1, 1);
 	bool noteFound = false;
 	if (j11) for (auto& n : j11->notes) noteFound = noteFound || n.second.find("Or, reason") != std::string::npos;
 	check_true(noteFound, "footnote: John 1:1 note body 'Or, reason'");

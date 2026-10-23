@@ -214,8 +214,9 @@ bool ImportMyBible(const std::string& sqlitePath, const std::string& userDir,
 		conf << "GlobalOptionFilter=OSISRedLetterWords\n";
 	if (used.footnotes)
 		conf << "GlobalOptionFilter=OSISFootnotes\n";
-	conf << "GlobalOptionFilter=OSISHeadings\n"
-		<< "About=Imported from the MyBible module " << OneLine(NameFromPath(sqlitePath))
+	// No OSISHeadings: MyBible verses carry no headings (those live in a separate table), and
+	// SWORD 1.9's OSISHeadings filter drops "&amp;" from the text.
+	conf << "About=Imported from the MyBible module " << OneLine(NameFromPath(sqlitePath))
 		<< " by Sheath.\n";
 	conf.close();
 	if (!conf)
