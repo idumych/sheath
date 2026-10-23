@@ -2,6 +2,9 @@
 
 #include <Application.h>
 #include <Clipboard.h>
+#include <File.h>
+#include <FindDirectory.h>
+#include <Path.h>
 #include <Beep.h>
 #include <Button.h>
 #include <LayoutBuilder.h>
@@ -253,7 +256,15 @@ bool ReaderWindow::QuitRequested()
 	for (int i = 0; i < 4; i++)
 		state.AddBool(kOptionNames[i], *OptionField(s.options, i));
 	state.AddRect("frame", Frame());
-	be_app->PostMessage(&state);
+	// Written here, not posted to the app: when the app is quitting it may not handle
+	// another message.
+	BPath path;
+	if (find_directory(B_USER_SETTINGS_DIRECTORY, &path, true) == B_OK) {
+		path.Append("Sheath_settings");
+		BFile file(path.Path(), B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
+		if (file.InitCheck() == B_OK)
+			state.Flatten(&file);
+	}
 	if (fSearch->Lock())
 		fSearch->Quit();
 	return true;

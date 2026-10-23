@@ -55,18 +55,6 @@ public:
 		(new ReaderWindow(frame, &fLibrary, state, bookmarks.Path()))->Show();
 	}
 
-	void MessageReceived(BMessage* message) override
-	{
-		if (message->what == 'stat') {
-			// The reader window's state, sent when it closes.
-			BFile file(SettingsPath().Path(), B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
-			if (file.InitCheck() == B_OK)
-				message->Flatten(&file);
-			return;
-		}
-		BApplication::MessageReceived(message);
-	}
-
 	void AboutRequested() override
 	{
 		BAlert* about = new BAlert("About Sheath", "Sheath 0.1.0\n\n"
