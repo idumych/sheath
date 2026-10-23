@@ -159,7 +159,10 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	fPrevButton = new BButton("prev", "\xE2\x97\x80", new BMessage(kMsgPrev));	// ◀
 	fNextButton = new BButton("next", "\xE2\x96\xB6", new BMessage(kMsgNext));	// ▶
 	fRefControl = new BTextControl("ref", nullptr, "", new BMessage(kMsgGoRef));
+#ifndef APP_COSMOE
+	// Cosmoe (Linux) never hides tooltips; they stay drawn above every window.
 	fRefControl->SetToolTip("Go to a reference, e.g. John 3:16");
+#endif
 	fText = new ChapterView("text");
 	BScrollView* scroll = new BScrollView("scroll", fText, 0, false, true, B_NO_BORDER);
 	fText2 = new ChapterView("parallel");
