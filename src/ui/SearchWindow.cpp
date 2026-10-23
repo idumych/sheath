@@ -83,6 +83,8 @@ SearchWindow::SearchWindow(BMessenger reader)
 	fResults = new BListView("results");
 	fResults->SetInvocationMessage(new BMessage(kMsgInvoke));
 	BScrollView* scroll = new BScrollView("scroll", fResults, 0, false, true);
+	// Without a minimum the window shrinks to the list's preferred size when it fills.
+	scroll->SetExplicitMinSize(BSize(be_plain_font->StringWidth("m") * 40, 240));
 	fStatus = new BStringView("status", "");
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_HALF_ITEM_SPACING)
