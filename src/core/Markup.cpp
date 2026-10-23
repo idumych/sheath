@@ -233,7 +233,9 @@ class Builder {
 public:
 	std::vector<Block> blocks;
 
-	void Text(const std::string& text, unsigned style, const Link& link)
+	// linkId: which <a> element the text is in (0 = none). Text of one element joins into one
+	// run; two elements stay two runs even with the same target (G3588 G3588).
+	void Text(const std::string& text, unsigned style, const Link& link, int linkId)
 	{
 		for (size_t i = 0; i < text.size(); i++) {
 			char c = text[i];
@@ -252,11 +254,12 @@ public:
 			// keeps the space out of the italic run.
 			if (pendingSpace && !b.runs.empty()) {
 				const Run& prev = b.runs.back();
-				bool sameLink = prev.link.kind == link.kind && prev.link.target == link.target;
-				Append(b, " ", prev.style & style, sameLink ? link : Link());
+				bool sameLink = prev.link.kind == link.kind && prev.link.target == link.target
+					&& fLastLinkId == linkId;
+				Append(b, " ", prev.style & style, sameLink ? link : Link(), sameLink ? linkId : 0);
 			}
 			pendingSpace = false;
-			Append(b, std::string(1, c), style, link);
+			Append(b, std::string(1, c), style, link, linkId);
 		}
 	}
 
@@ -300,21 +303,24 @@ private:
 		return blocks.back();
 	}
 
-	void Append(Block& b, const std::string& s, unsigned style, const Link& link)
+	void Append(Block& b, const std::string& s, unsigned style, const Link& link, int linkId)
 	{
 		if (!b.runs.empty()) {
 			Run& last = b.runs.back();
 			if (last.style == style && last.link.kind == link.kind
-					&& last.link.target == link.target) {
+					&& last.link.target == link.target && fLastLinkId == linkId) {
 				last.text += s;
 				return;
 			}
 		}
 		b.runs.push_back(Run{s, style, link});
+		fLastLinkId = linkId;
 	}
+
+	int fLastLinkId = 0;
 };
 
-struct Frame { std::string name; unsigned style; Link link; bool heading; bool decor; };
+struct Frame { std::string name; unsigned style; Link link; int linkId; bool heading; bool decor; };
 
 }	// namespace
 
@@ -326,6 +332,7 @@ std::vector<Block> ParseXhtml(const std::string& xhtml)
 	unsigned style = 0;
 	Link link;
 	bool decor = false;		// inside SWORD's "<em class=strongs>&lt;<a>N</a>&gt;</em>"
+	int linkId = 0, links = 0;
 	std::string text;
 
 	auto flush = [&]() {
@@ -343,7 +350,7 @@ std::vector<Block> ParseXhtml(const std::string& xhtml)
 			for (char& c : text)
 				c = (char)std::toupper((unsigned char)c);
 		}
-		out.Text(text, style, link);
+		out.Text(text, style, link, linkId);
 		text.clear();
 	};
 
@@ -397,6 +404,7 @@ std::vector<Block> ParseXhtml(const std::string& xhtml)
 				bool heading = stack[k - 1].heading;
 				style = stack[k - 1].style;
 				link = stack[k - 1].link;
+				linkId = stack[k - 1].linkId;
 				decor = stack[k - 1].decor;
 				stack.resize(k - 1);
 				if (heading || IsBlockTag(tag.name))
@@ -410,7 +418,7 @@ std::vector<Block> ParseXhtml(const std::string& xhtml)
 
 		bool heading = IsHeading(tag.name) || HasClass(tag.cls, "title")
 			|| HasClass(tag.cls, "heading");
-		stack.push_back(Frame{tag.name, style, link, heading, decor});
+		stack.push_back(Frame{tag.name, style, link, linkId, heading, decor});
 		if (heading)
 			out.Start(Block::Heading);
 		else if (IsBlockTag(tag.name))
@@ -424,8 +432,10 @@ std::vector<Block> ParseXhtml(const std::string& xhtml)
 			style |= kSmall;
 		else if (tag.name == "sup")
 			style |= kSuperscript;
-		else if (tag.name == "a")
+		else if (tag.name == "a") {
 			link = LinkFromHref(tag.href);
+			linkId = ++links;
+		}
 		if (HasClass(tag.cls, "strongs") || HasClass(tag.cls, "morph"))
 			decor = true;
 		if (HasClass(tag.cls, "wordsOfJesus"))

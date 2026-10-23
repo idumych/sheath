@@ -152,6 +152,10 @@ static void test_markup_unit() {
     auto m = ParseXhtml("<b>a</b><b>b</b>");
     check_true(m.size() == 1 && m[0].runs.size() == 1 && m[0].runs[0].text == "ab", "markup: equal runs merged");
     check_eq(PlainText(ParseXhtml("<unknown>kept</unknown>")), "kept", "markup: unknown tag keeps text");
+    auto two = ParseXhtml("<a href=\"passagestudy.jsp?action=showStrongs&amp;type=Greek&amp;value=3588\">3588</a>"
+                          "<a href=\"passagestudy.jsp?action=showStrongs&amp;type=Greek&amp;value=3588\">3588</a>");
+    check_true(two.size() == 1 && two[0].runs.size() == 2 && two[0].runs[1].text == "3588",
+               "markup: two equal links stay two runs");
     check_true(ParseXhtml("").empty() || PlainText(ParseXhtml("")).empty(), "markup: empty input");
 
     auto refs = ParseXhtml("love (or compare 5689). <br /> see GREEK for 5368 <br /> see HEBREW for 0430 from 1537 and 25 alone");
