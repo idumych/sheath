@@ -38,8 +38,7 @@ fi
 
 CXX=${CXX:-g++}
 CFLAGS="-std=c++17 -Wall -Wno-deprecated-declarations -g $(pkg-config --cflags sword) -Isrc/core -I$D/gen"
-LIBS="$(pkg-config --libs sword)"
-[ ! -f src/core/bookmarks_schema.sql ] || LIBS="$LIBS -lsqlite3"
+LIBS="$(pkg-config --libs sword) -lsqlite3"
 export SWORD_PATH=$FIX
 
 if [ $# -gt 0 ]; then names=$*; else

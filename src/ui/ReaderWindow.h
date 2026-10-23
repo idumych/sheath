@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Entry.h>
 #include <Window.h>
 
 #include <map>
@@ -12,6 +13,7 @@
 
 class BButton;
 class BMenu;
+class BFilePanel;
 class BMenuField;
 class BMenuItem;
 class BPopUpMenu;
@@ -54,6 +56,7 @@ private:
 	void ShowVerseMenu(int verse, BPoint where);
 	void CopyVerse(int verse);
 	void ToggleBookmark(int verse);
+	void ImportMyBible(const entry_ref& ref);
 
 	sheath::SwordLibrary* fLibrary;
 	ReaderState fState;
@@ -79,6 +82,7 @@ private:
 	BMenu* fSpacingMenu;
 	BMenuItem* fVersePerLineItem;
 	BMenuItem* fOptionItems[4];
+	BFilePanel* fImportPanel = nullptr;
 	std::vector<sheath::VerseText> fVerses2;
 	SearchWindow* fSearch;
 };

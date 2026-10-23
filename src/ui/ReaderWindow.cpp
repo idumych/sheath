@@ -1,7 +1,9 @@
 #include "ReaderWindow.h"
 
 #include <Application.h>
+#include <Alert.h>
 #include <Clipboard.h>
+#include <FilePanel.h>
 #include <File.h>
 #include <FindDirectory.h>
 #include <Path.h>
@@ -18,6 +20,7 @@
 #include <TextControl.h>
 
 #include <cmath>
+#include <thread>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -28,6 +31,7 @@
 #include "Markup.h"
 #include "Ref.h"
 #include "InstallWindow.h"
+#include "MyBible.h"
 #include "SearchWindow.h"
 
 using namespace sheath;
@@ -53,6 +57,9 @@ enum {
 	kMsgFont = 'font',
 	kMsgSpacing = 'spcg',
 	kMsgVersePerLine = 'vpln',
+	kMsgImportPanel = 'impp',
+	kMsgImportRef = 'impr',
+	kMsgImportDone = 'impd',
 };
 
 const char* kOptionNames[] = {"Strong's numbers", "Footnotes", "Headings", "Words of Christ in red"};
@@ -258,6 +265,30 @@ void ReaderWindow::CopyVerse(int verse)
 }
 
 
+void ReaderWindow::ImportMyBible(const entry_ref& ref)
+{
+	BPath path(&ref);
+	const char* home = getenv("HOME");
+	std::string userDir = std::string(home ? home : "/boot/home") + "/.sword";
+	std::string file = path.Path() ? path.Path() : "";
+	BMessenger self(this);
+	SetTitle("Importing" "\xE2\x80\xA6");
+	// A whole Bible takes a few seconds; don't block the window.
+	std::thread([self, file, userDir]() {
+		ImportResult result;
+		std::string error;
+		bool ok = sheath::ImportMyBible(file, userDir, "", &result, &error);
+		BMessage done(kMsgImportDone);
+		done.AddBool("ok", ok);
+		done.AddString("module", result.module.c_str());
+		done.AddInt32("verses", result.verses);
+		done.AddInt32("skipped", result.skipped);
+		done.AddString("error", error.c_str());
+		self.SendMessage(&done);
+	}).detach();
+}
+
+
 void ReaderWindow::ToggleBookmark(int verse)
 {
 	if (!fBookmarks.Remove(fState.book, fState.chapter, verse))
@@ -368,6 +399,8 @@ void ReaderWindow::BuildModuleMenu()
 	BMenuItem* install = new BMenuItem("Install modules" "\xE2\x80\xA6",
 		new BMessage(kMsgInstallWindow));
 	fModuleMenu->AddItem(install);
+	fModuleMenu->AddItem(new BMenuItem("Import MyBible module" "\xE2\x80\xA6",
+		new BMessage(kMsgImportPanel)));
 	BuildBookMenu();
 }
 
@@ -633,6 +666,41 @@ void ReaderWindow::MessageReceived(BMessage* message)
 				message->GetInt32("verse", 0));
 			Activate();
 			break;
+		case kMsgImportPanel:
+			if (fImportPanel == nullptr) {
+				fImportPanel = new BFilePanel(B_OPEN_PANEL, new BMessenger(this), nullptr,
+					B_FILE_NODE, false, new BMessage(kMsgImportRef));
+				fImportPanel->Window()->SetTitle("Import a MyBible module (.SQLite3)");
+			}
+			fImportPanel->Show();
+			break;
+		case kMsgImportRef: {
+			entry_ref ref;
+			if (message->FindRef("refs", &ref) == B_OK)
+				ImportMyBible(ref);
+			break;
+		}
+		case kMsgImportDone: {
+			std::string module = message->GetString("module", "");
+			std::string text;
+			if (message->GetBool("ok", false)) {
+				text = "Imported " + std::to_string(message->GetInt32("verses", 0)) + " verses as "
+					+ module + ".";
+				int32 skipped = message->GetInt32("skipped", 0);
+				if (skipped > 0) {
+					text += "\n\n" + std::to_string(skipped) + " verses were left out (books or "
+						"verses outside the KJV canon, such as the deuterocanonical books).";
+				}
+				fLibrary->Reload();
+				fState.module = module;
+				LibraryChanged();
+			} else {
+				text = "Couldn't import the module.\n\n" + std::string(message->GetString("error", ""));
+				ShowChapter(fText->VerseAtTop());
+			}
+			(new BAlert("Import", text.c_str(), "OK"))->Go(nullptr);
+			break;
+		}
 		case kMsgParallel:
 			fState.parallel = message->GetString("module", "");
 			ShowChapter(fText->VerseAtTop());
