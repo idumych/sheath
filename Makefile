@@ -26,7 +26,7 @@ VOS_ARCH := $(if $(filter aarch64,$(shell uname -m)),arm64,$(shell uname -m))
 SRCS     := $(wildcard src/core/*.cpp) $(wildcard src/ui/*.cpp)
 INCLUDES := src/core src/ui
 # Libraries beyond the Haiku API (same on every platform), e.g. -lsqlite3 -lcrypto
-APP_LIBS := $(shell pkg-config --libs sword 2>/dev/null || echo -lsword)
+APP_LIBS := $(shell pkg-config --libs sword 2>/dev/null || echo -lsword) -lsqlite3
 
 override CXXFLAGS += $(addprefix -I,$(INCLUDES)) $(shell pkg-config --cflags sword 2>/dev/null)
 
