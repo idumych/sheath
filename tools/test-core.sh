@@ -2,7 +2,7 @@
 # Builds and runs Sheath's host-side tests. The only way to run them.
 #   sh tools/test-core.sh [name...]     e.g. sh tools/test-core.sh layout
 # Runs in CI only (tools/ci-test.sh). Every tests/test_<name>.cpp is linked with all of src/core/*.cpp, libsword and sqlite3,
-# and run with a 120 s timeout. Test lines look like "  PASS: <name>" / "  FAIL: <name>: ...".
+# and run with a timeout (TEST_TIMEOUT, default 120 s). Test lines look like "  PASS: <name>" / "  FAIL: <name>: ...".
 # Prints a last line "TOTAL <n> PASS <p> FAIL <f>"; exits 1 if f > 0 or n == 0.
 # A binary that fails to build, crashes or times out counts as a FAIL line.
 # Fixtures (.deps/fixtures/sword: CrossWire KJV + StrongsGreek) are read-only; each binary gets
@@ -54,7 +54,7 @@ for n in $names; do
 		continue
 	fi
 	rm -rf "$D/tmp/$n" && mkdir -p "$D/tmp/$n"
-	SHEATH_TMP=$D/tmp/$n timeout 120 "$D/bin/test_$n" > "$D/tmp/out_$n.log" 2>&1
+	SHEATH_TMP=$D/tmp/$n timeout "${TEST_TIMEOUT:-120}" "$D/bin/test_$n" > "$D/tmp/out_$n.log" 2>&1
 	rc=$?
 	tee -a "$LOG" < "$D/tmp/out_$n.log" | grep -E '^  (PASS|FAIL):'
 	[ $rc -eq 0 ] || echo "  FAIL: test_$n exited with status $rc$( [ $rc -eq 124 ] && echo ' (timeout)')" | tee -a "$LOG"

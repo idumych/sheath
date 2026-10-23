@@ -5,14 +5,19 @@ description: How to build, test and write code for Sheath (native Bible reader, 
 
 # Sheath development
 
-## Building and testing: GitHub CI only
-Nothing is compiled or run on this machine. There is no local libsword, no VM, no container.
-- `timeout 2000 sh tools/ci-test.sh` — THE way to build and test. It pushes a snapshot of your
-  working tree to CI (Debian trixie with libsword-dev, amd64 + arm64), waits (a few minutes) and
-  prints, per architecture: compiler errors, every `PASS:`/`FAIL:` line, `TOTAL n PASS p FAIL f`,
-  and the run's conclusion. Run it once per fix round, not in a loop; read the whole output.
-- Don't run g++, make, cmake, tools/test-core.sh or tools/build-sword.sh yourself; don't use git
-  (ci-test.sh does the push). Don't write anything in /tmp; scratch files go in .deps/tmp/.
+## Building and testing
+Everything runs inside a Debian trixie root (same libsword-dev as CI and VitruvianOS). Never run
+g++, make or tests directly on the host; the host has no libsword.
+- Fast loop (seconds), use this while working:
+  `TEST_TIMEOUT=20 timeout 300 sh tools/trixie.sh sh tools/test-core.sh <name>`
+  where <name> is the test file suffix: `text` (tests/test_text.cpp), `layout`, ... Omit <name>
+  for all. Prints every PASS/FAIL line and `TOTAL n PASS p FAIL f`.
+- Debug inside it, always with a timeout:
+  `timeout 60 sh tools/trixie.sh gdb -batch -ex run -ex 'bt 15' --args .deps/bin/test_text`
+  (for a hang: `timeout 60 sh tools/trixie.sh timeout -s INT 15 gdb -batch -ex run -ex 'bt 15' --args .deps/bin/test_text`)
+- Final check (both architectures, a few minutes): `timeout 2000 sh tools/ci-test.sh`.
+  Run it once at the end, after the fast loop passes.
+- Don't use git (ci-test.sh does its own push). Don't write in /tmp; scratch goes in .deps/tmp/.
 - Tests that write files must write only under scratch_dir() (tests/check.h); the fixture modules
   are read-only.
 - Tests are written by Claude and are the spec. You may not edit any file under tests/ unless the
