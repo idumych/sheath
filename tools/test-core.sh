@@ -68,6 +68,24 @@ if ! timeout 120 "$OUT" > "$TMPLOG" 2>&1; then
   fi
 fi
 
+# ---- compile test_layout ----
+echo "Compiling test_layout…"
+$CXX -std=gnu++17 $CORE_INC -o "$ROOT/.deps/test_layout" \
+  tests/test_layout.cpp \
+  src/core/Layout.cpp src/core/Markup.cpp
+
+# ---- run test_layout ----
+echo "Running test_layout…"
+EXITCODE_LAYOUT=0
+if ! timeout 300 "$ROOT/.deps/test_layout" >> "$TMPLOG" 2>&1; then
+  EXITCODE_LAYOUT=$?
+  if [ "$EXITCODE_LAYOUT" -eq 124 ]; then
+    echo "test_layout timed out after 300s"
+  else
+    echo "test_layout crashed or returned non-zero"
+  fi
+fi
+
 # Count PASS/FAIL from output lines matching the test format
 TOTAL=0; PASS=0; FAIL=0
 if grep -q '^  PASS:' "$TMPLOG" 2>/dev/null; then
@@ -79,7 +97,7 @@ if grep -q '^  FAIL:' "$TMPLOG" 2>/dev/null; then
 fi
 
 # If the binary crashed or timed out, count as a failure
-if [ "$EXITCODE" -ne 0 ]; then
+if [ "$EXITCODE" -ne 0 ] || [ "$EXITCODE_LAYOUT" -ne 0 ]; then
   FAIL=$((FAIL + 1))
   TOTAL=$((PASS + FAIL))
 fi

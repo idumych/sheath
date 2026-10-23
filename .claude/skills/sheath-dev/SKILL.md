@@ -57,3 +57,9 @@ Module key versification: `mod->getConfigEntry("Versification")` ("" = "KJV"); c
 - Task 1: Books() was a hand-typed 66-book table; Ref.cpp had ~70 lines of `if (bookPart == "Gen")`.
   Both are wrong for other versifications. Use VersificationMgr / parseVerseList.
 - Task 1: test run under gdb with no timeout blocked the session.
+- Task 1: the brief said "PlainText of John 3:16 equals diatheke's text, computed at test time";
+  the test only checked that the text *contains* "God" and "world", and the Gen 1:1 / Ps 23:1
+  comparisons were dropped. A contains-check is not the specified test. Implement the comparison
+  the brief names; if it fails, leave it failing and report the difference.
+- Task 1: a missing dictionary key was detected by searching the text for "@@@@". SWORD jumps to
+  the nearest key; compare the key it landed on with the requested one instead.
