@@ -32,7 +32,8 @@ public:
 	// bookmarked: verse numbers drawn in the accent colour.
 	void SetChapter(const std::vector<sheath::VerseText>& verses, const ReadingStyle& style,
 		const std::set<int>& bookmarked = std::set<int>());
-	void SetEntry(const std::string& xhtml, const ReadingStyle& style);	// a dictionary entry
+	// A dictionary entry. strongsPrefix 'G'/'H': link "see GREEK for 5689" etc. (0 = don't).
+	void SetEntry(const std::string& xhtml, const ReadingStyle& style, char strongsPrefix = 0);
 	void SetMessageText(const char* text, const ReadingStyle& style);	// "no modules" etc.
 
 	static bool HasFamily(const char* family);

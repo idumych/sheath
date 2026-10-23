@@ -153,6 +153,18 @@ static void test_markup_unit() {
     check_true(m.size() == 1 && m[0].runs.size() == 1 && m[0].runs[0].text == "ab", "markup: equal runs merged");
     check_eq(PlainText(ParseXhtml("<unknown>kept</unknown>")), "kept", "markup: unknown tag keeps text");
     check_true(ParseXhtml("").empty() || PlainText(ParseXhtml("")).empty(), "markup: empty input");
+
+    auto refs = ParseXhtml("love (or compare 5689). <br /> see GREEK for 5368 <br /> see HEBREW for 0430 from 1537 and 25 alone");
+    LinkStrongsReferences(refs, 'G');
+    std::vector<std::string> targets;
+    for (auto& blk : refs) for (auto& r : blk.runs)
+        if (r.link.kind == LinkKind::Strongs) targets.push_back(r.text + "=" + r.link.target);
+    std::string joined;
+    for (auto& t : targets) joined += (joined.empty() ? "" : " ") + t;
+    check_eq(joined, std::string("5689=G5689 5368=G5368 0430=H0430 1537=G1537"),
+             "strongs refs: linked numbers and prefixes");
+    check_true(PlainText(refs).find("see GREEK for 5368") != std::string::npos,
+               "strongs refs: text unchanged");
 }
 
 int main() {

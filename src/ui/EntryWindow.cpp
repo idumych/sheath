@@ -41,7 +41,7 @@ void EntryWindow::Show(const std::string& title, const std::string& xhtml, const
 	// Entries read better without the extra line spacing and verse layout.
 	ReadingStyle entryStyle = style;
 	entryStyle.lineSpacing = std::min(style.lineSpacing, 1.3f);
-	sWindow->fText->SetEntry(xhtml, entryStyle);
+	sWindow->fText->SetEntry(xhtml, entryStyle, strongs.empty() ? 0 : strongs[0]);
 	sWindow->fStrongs = strongs;
 	sWindow->fTarget = target;
 	if (strongs.empty() && !sWindow->fFind->IsHidden())
@@ -57,6 +57,11 @@ void EntryWindow::Show(const std::string& title, const std::string& xhtml, const
 
 void EntryWindow::MessageReceived(BMessage* message)
 {
+	if (message->what == ChapterView::kMsgLinkClicked) {
+		// A Strong's number inside the entry: the reader opens it (in this window).
+		fTarget.SendMessage(message);
+		return;
+	}
 	if (message->what == kMsgFindStrongs) {
 		BMessage find(kMsgFindStrongs);
 		find.AddString("strongs", fStrongs.c_str());

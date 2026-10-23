@@ -252,13 +252,16 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, const Reading
 }
 
 
-void ChapterView::SetEntry(const std::string& xhtml, const ReadingStyle& style)
+void ChapterView::SetEntry(const std::string& xhtml, const ReadingStyle& style, char strongsPrefix)
 {
 	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
 	RunBuilder b(style);
-	for (const Block& block : ParseXhtml(xhtml)) {
+	std::vector<Block> blocks = ParseXhtml(xhtml);
+	if (strongsPrefix != 0)
+		LinkStrongsReferences(blocks, strongsPrefix);
+	for (const Block& block : blocks) {
 		if (b.Length() > 0)
 			b.Add("\n", b.Base(), kText, true);
 		for (const Run& run : block.runs) {

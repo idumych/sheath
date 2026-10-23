@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <regex>
 
 // A small reader for the XHTML that SWORD's FMT_XHTML filters produce. It isn't a general HTML
 // parser: it knows SWORD's vocabulary (passagestudy.jsp links, wordsOfJesus/divineName/
@@ -437,6 +438,38 @@ std::vector<Block> ParseXhtml(const std::string& xhtml)
 	flush();
 	out.Finish();
 	return out.blocks;
+}
+
+
+void LinkStrongsReferences(std::vector<Block>& blocks, char defaultPrefix)
+{
+	static const std::regex kRef("(see GREEK for|see HEBREW for|[Cc]ompare|from) ([0-9]{1,5})\\b");
+	for (Block& block : blocks) {
+		std::vector<Run> out;
+		for (const Run& run : block.runs) {
+			if (run.link.kind != LinkKind::None) {
+				out.push_back(run);
+				continue;
+			}
+			size_t done = 0;
+			for (std::sregex_iterator it(run.text.begin(), run.text.end(), kRef), end; it != end; ++it) {
+				const std::smatch& m = *it;
+				size_t numberStart = m.position(2);
+				char prefix = m.str(1) == "see GREEK for" ? 'G'
+					: m.str(1) == "see HEBREW for" ? 'H' : defaultPrefix;
+				if (numberStart > done)
+					out.push_back(Run{run.text.substr(done, numberStart - done), run.style, Link()});
+				Link link;
+				link.kind = LinkKind::Strongs;
+				link.target = std::string(1, prefix) + m.str(2);
+				out.push_back(Run{m.str(2), run.style, link});
+				done = numberStart + m.length(2);
+			}
+			if (done < run.text.size())
+				out.push_back(Run{run.text.substr(done), run.style, Link()});
+		}
+		block.runs = out;
+	}
 }
 
 
