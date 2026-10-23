@@ -18,6 +18,7 @@ const rgb_color kVerseNumber = {130, 130, 130, 255};
 const rgb_color kRed = {180, 20, 20, 255};
 const rgb_color kLink = {40, 90, 170, 255};
 const rgb_color kHeading = {60, 60, 60, 255};
+const rgb_color kBookmarked = {215, 120, 0, 255};
 
 }	// namespace
 
@@ -112,7 +113,8 @@ ChapterView::ChapterView(const char* name)
 }
 
 
-void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSize)
+void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSize,
+	const std::set<int>& bookmarked)
 {
 	fLinks.clear();
 	fVerses.clear();
@@ -138,8 +140,11 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSiz
 				if (b.Length() > 0)
 					b.Add(" ", BFont(be_plain_font), kText);
 				fVerses.push_back({v.verse, b.Length()});
-				b.Add(std::to_string(v.verse), numberFont, kVerseNumber);
-				b.Add("\xC2\xA0", numberFont, kVerseNumber);	// no-break space
+				rgb_color numberColor = bookmarked.count(v.verse) ? kBookmarked : kVerseNumber;
+				if (bookmarked.count(v.verse))
+					b.Add("\xE2\x97\x86", numberFont, numberColor);	// ◆
+				b.Add(std::to_string(v.verse), numberFont, numberColor);
+				b.Add("\xC2\xA0", numberFont, numberColor);	// no-break space
 				numbered = true;
 			}
 			bool afterNumber = false;
@@ -224,6 +229,19 @@ int ChapterView::VerseAtTop() const
 }
 
 
+int ChapterView::VerseAt(BPoint where) const
+{
+	int32 offset = OffsetAt(where);
+	int verse = 0;
+	for (const VerseStart& v : fVerses) {
+		if (v.offset > offset)
+			break;
+		verse = v.verse;
+	}
+	return verse;
+}
+
+
 const ChapterView::LinkRange* ChapterView::LinkAt(BPoint where) const
 {
 	if (fLinks.empty())
@@ -246,6 +264,13 @@ void ChapterView::MouseDown(BPoint where)
 	int32 buttons = 0;
 	if (Window()->CurrentMessage() != nullptr)
 		Window()->CurrentMessage()->FindInt32("buttons", &buttons);
+	if ((buttons & B_SECONDARY_MOUSE_BUTTON) != 0 && VerseAt(where) > 0) {
+		BMessage msg(kMsgVerseMenu);
+		msg.AddInt32("verse", VerseAt(where));
+		msg.AddPoint("where", ConvertToScreen(where));
+		Window()->PostMessage(&msg);
+		return;
+	}
 	const LinkRange* link = (buttons & B_PRIMARY_MOUSE_BUTTON) ? LinkAt(where) : nullptr;
 	if (link == nullptr) {
 		BTextView::MouseDown(where);

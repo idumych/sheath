@@ -48,7 +48,10 @@ public:
 		BRect frame = settings.GetRect("frame", BRect(80, 60, 720, 700));
 		if (!BScreen().Frame().Intersects(frame))
 			frame = BRect(80, 60, 720, 700);
-		(new ReaderWindow(frame, &fLibrary, state))->Show();
+		BPath bookmarks;
+		find_directory(B_USER_SETTINGS_DIRECTORY, &bookmarks, true);
+		bookmarks.Append("Sheath_bookmarks");
+		(new ReaderWindow(frame, &fLibrary, state, bookmarks.Path()))->Show();
 	}
 
 	void MessageReceived(BMessage* message) override

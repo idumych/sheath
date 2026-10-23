@@ -1,6 +1,7 @@
 #include "ReaderWindow.h"
 
 #include <Application.h>
+#include <Clipboard.h>
 #include <Beep.h>
 #include <Button.h>
 #include <LayoutBuilder.h>
@@ -12,7 +13,10 @@
 #include <ScrollView.h>
 #include <TextControl.h>
 
+#include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <set>
 
 #include "ChapterView.h"
 #include "EntryWindow.h"
@@ -37,6 +41,9 @@ enum {
 	kMsgToggle = 'togl',
 	kMsgSearchWindow = 'srwn',
 	kMsgInstallWindow = 'inwn',
+	kMsgCopyVerse = 'cpyv',
+	kMsgToggleBookmark = 'tgbm',
+	kMsgOpenBookmark = 'opbm',
 };
 
 const char* kOptionNames[] = {"Strong's numbers", "Footnotes", "Headings", "Words of Christ in red"};
@@ -54,11 +61,13 @@ bool* OptionField(DisplayOptions& o, int i)
 }	// namespace
 
 
-ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState& state)
+ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState& state,
+	const std::string& bookmarksPath)
 	:
 	BWindow(frame, "Sheath", B_DOCUMENT_WINDOW, B_AUTO_UPDATE_SIZE_LIMITS | B_QUIT_ON_WINDOW_CLOSE),
 	fLibrary(library),
-	fState(state)
+	fState(state),
+	fBookmarks(bookmarksPath)
 {
 	if (fState.fontSize <= 0)
 		fState.fontSize = be_plain_font->Size() * 1.35f;
@@ -78,6 +87,8 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	go->AddSeparatorItem();
 	go->AddItem(new BMenuItem("Search" "\xE2\x80\xA6", new BMessage(kMsgSearchWindow), 'F'));
 	menuBar->AddItem(go);
+	fBookmarksMenu = new BMenu("Bookmarks");
+	menuBar->AddItem(fBookmarksMenu);
 	fViewMenu = new BMenu("View");
 	fViewMenu->AddItem(new BMenuItem("Larger text", new BMessage(kMsgBigger), '+'));
 	fViewMenu->AddItem(new BMenuItem("Smaller text", new BMessage(kMsgSmaller), '-'));
@@ -118,8 +129,95 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	fSearch->Show();	// run its looper hidden, so Start() can be called any time
 
 	BuildModuleMenu();
+	BuildBookmarksMenu();
 	UpdateOptionItems();
 	ShowChapter(fState.verse);
+}
+
+
+void ReaderWindow::BuildBookmarksMenu()
+{
+	while (BMenuItem* item = fBookmarksMenu->RemoveItem((int32)0))
+		delete item;
+	if (fBookmarks.All().empty()) {
+		BMenuItem* none = new BMenuItem("Right-click a verse to bookmark it", nullptr);
+		none->SetEnabled(false);
+		fBookmarksMenu->AddItem(none);
+		return;
+	}
+	// Newest first.
+	const std::vector<Bookmark>& all = fBookmarks.All();
+	for (auto it = all.rbegin(); it != all.rend(); ++it) {
+		std::string label = FormatRef({it->book, it->chapter, it->verse});
+		if (!it->note.empty())
+			label += " \xE2\x80\x94 " + it->note.substr(0, 60);
+		BMessage* msg = new BMessage(kMsgOpenBookmark);
+		msg->AddString("book", it->book.c_str());
+		msg->AddInt32("chapter", it->chapter);
+		msg->AddInt32("verse", it->verse);
+		fBookmarksMenu->AddItem(new BMenuItem(label.c_str(), msg));
+	}
+}
+
+
+void ReaderWindow::ShowVerseMenu(int verse, BPoint where)
+{
+	std::string ref = FormatRef({fState.book, fState.chapter, verse});
+	BPopUpMenu* menu = new BPopUpMenu("verse", false, false);
+	BMessage* copy = new BMessage(kMsgCopyVerse);
+	copy->AddInt32("verse", verse);
+	menu->AddItem(new BMenuItem(("Copy " + ref).c_str(), copy));
+	BMessage* mark = new BMessage(kMsgToggleBookmark);
+	mark->AddInt32("verse", verse);
+	bool marked = fBookmarks.Find(fState.book, fState.chapter, verse) != nullptr;
+	menu->AddItem(new BMenuItem(((marked ? "Remove bookmark " : "Bookmark ") + ref).c_str(), mark));
+	menu->SetTargetForItems(this);
+	menu->SetAsyncAutoDestruct(true);
+	menu->Go(where, true, false, true);
+}
+
+
+void ReaderWindow::CopyVerse(int verse)
+{
+	std::string text;
+	for (const VerseText& v : fVerses) {
+		if (v.verse != verse)
+			continue;
+		for (const Block& b : ParseXhtml(v.xhtml)) {
+			if (b.kind == Block::Heading)
+				continue;
+			for (const sheath::Run& r : b.runs) {
+				// Strong's numbers and note markers aren't part of the text.
+				if (r.link.kind == LinkKind::None || r.link.kind == LinkKind::CrossRef
+						|| r.link.kind == LinkKind::Url)
+					text += r.text;
+			}
+			text += ' ';
+		}
+	}
+	size_t first = text.find_first_not_of(' ');
+	size_t last = text.find_last_not_of(' ');
+	text = first == std::string::npos ? "" : text.substr(first, last - first + 1);
+	text += " (" + FormatRef({fState.book, fState.chapter, verse}) + " " + fState.module + ")";
+	if (be_clipboard->Lock()) {
+		be_clipboard->Clear();
+		be_clipboard->Data()->AddData("text/plain", B_MIME_TYPE, text.c_str(), text.size());
+		be_clipboard->Commit();
+		be_clipboard->Unlock();
+	}
+}
+
+
+void ReaderWindow::ToggleBookmark(int verse)
+{
+	if (!fBookmarks.Remove(fState.book, fState.chapter, verse))
+		fBookmarks.Set({fState.book, fState.chapter, verse, "", (int64_t)time(nullptr)});
+	std::string error;
+	if (!fBookmarks.Save(&error))
+		fprintf(stderr, "Sheath: %s\n", error.c_str());
+	BuildBookmarksMenu();
+	int top = fText->VerseAtTop();
+	ShowChapter(top);
 }
 
 
@@ -258,7 +356,12 @@ void ReaderWindow::ShowChapter(int scrollToVerse)
 	if (fVerses.empty()) {
 		fText->SetMessageText("This chapter is empty in this module.", fState.fontSize);
 	} else {
-		fText->SetChapter(fVerses, fState.fontSize);
+		std::set<int> marked;
+		for (const Bookmark& b : fBookmarks.All()) {
+			if (b.book == fState.book && b.chapter == fState.chapter)
+				marked.insert(b.verse);
+		}
+		fText->SetChapter(fVerses, fState.fontSize, marked);
 		if (scrollToVerse > 1)
 			fText->ScrollToVerse(scrollToVerse);
 	}
@@ -418,6 +521,19 @@ void ReaderWindow::MessageReceived(BMessage* message)
 			GoTo(message->GetString("book", "Gen"), message->GetInt32("chapter", 1),
 				message->GetInt32("verse", 0));
 			Activate();
+			break;
+		case ChapterView::kMsgVerseMenu:
+			ShowVerseMenu(message->GetInt32("verse", 0), message->GetPoint("where", BPoint()));
+			break;
+		case kMsgCopyVerse:
+			CopyVerse(message->GetInt32("verse", 0));
+			break;
+		case kMsgToggleBookmark:
+			ToggleBookmark(message->GetInt32("verse", 0));
+			break;
+		case kMsgOpenBookmark:
+			GoTo(message->GetString("book", "Gen"), message->GetInt32("chapter", 1),
+				message->GetInt32("verse", 0));
 			break;
 		case ChapterView::kMsgLinkClicked:
 			OpenLink(message->GetInt32("kind", 0), message->GetString("target", ""),

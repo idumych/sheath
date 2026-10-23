@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Bookmarks.h"
 #include "Sword.h"
 
 class BButton;
@@ -27,7 +28,8 @@ struct ReaderState {
 
 class ReaderWindow : public BWindow {
 public:
-	ReaderWindow(BRect frame, sheath::SwordLibrary* library, const ReaderState& state);
+	ReaderWindow(BRect frame, sheath::SwordLibrary* library, const ReaderState& state,
+		const std::string& bookmarksPath);
 
 	void MessageReceived(BMessage* message) override;
 	bool QuitRequested() override;
@@ -46,6 +48,10 @@ private:
 	void Step(int delta);
 	void OpenLink(int32 kind, const std::string& target, int verse);
 	void UpdateOptionItems();
+	void BuildBookmarksMenu();
+	void ShowVerseMenu(int verse, BPoint where);
+	void CopyVerse(int verse);
+	void ToggleBookmark(int verse);
 
 	sheath::SwordLibrary* fLibrary;
 	ReaderState fState;
@@ -54,6 +60,8 @@ private:
 
 	BMenu* fModuleMenu;
 	BMenu* fViewMenu;
+	BMenu* fBookmarksMenu;
+	sheath::BookmarkStore fBookmarks;
 	BPopUpMenu* fBookMenu;
 	BPopUpMenu* fChapterMenu;
 	BMenuField* fBookField;
