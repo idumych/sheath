@@ -1,6 +1,7 @@
 #include "EntryWindow.h"
 
 #include <Autolock.h>
+#include <Button.h>
 #include <LayoutBuilder.h>
 #include <ScrollView.h>
 
@@ -16,22 +17,48 @@ EntryWindow::EntryWindow()
 {
 	fText = new ChapterView("entry");
 	BScrollView* scroll = new BScrollView("scroll", fText, 0, false, true, B_NO_BORDER);
-	BLayoutBuilder::Group<>(this, B_VERTICAL, 0).Add(scroll);
+	fFind = new BButton("find", "Find all verses", new BMessage(kMsgFindStrongs));
+	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
+		.Add(scroll)
+		.AddGroup(B_HORIZONTAL)
+			.SetInsets(B_USE_HALF_ITEM_INSETS)
+			.AddGlue()
+			.Add(fFind)
+		.End();
 	CenterOnScreen();
 }
 
 
-void EntryWindow::Show(const std::string& title, const std::string& xhtml, float fontSize)
+void EntryWindow::Show(const std::string& title, const std::string& xhtml, float fontSize,
+	const std::string& strongs, BMessenger target)
 {
 	if (sWindow == nullptr)
 		sWindow = new EntryWindow();
 	BAutolock lock(sWindow);
 	sWindow->SetTitle(title.c_str());
 	sWindow->fText->SetEntry(xhtml, fontSize);
+	sWindow->fStrongs = strongs;
+	sWindow->fTarget = target;
+	if (strongs.empty() && !sWindow->fFind->IsHidden())
+		sWindow->fFind->Hide();
+	else if (!strongs.empty() && sWindow->fFind->IsHidden())
+		sWindow->fFind->Show();
 	if (sWindow->IsHidden())
 		sWindow->BWindow::Show();
 	else
 		sWindow->Activate();
+}
+
+
+void EntryWindow::MessageReceived(BMessage* message)
+{
+	if (message->what == kMsgFindStrongs) {
+		BMessage find(kMsgFindStrongs);
+		find.AddString("strongs", fStrongs.c_str());
+		fTarget.SendMessage(&find);
+		return;
+	}
+	BWindow::MessageReceived(message);
 }
 
 

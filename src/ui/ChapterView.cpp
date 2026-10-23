@@ -13,11 +13,28 @@ using namespace sheath;
 
 namespace {
 
-const rgb_color kText = {20, 20, 20, 255};
-const rgb_color kVerseNumber = {130, 130, 130, 255};
-const rgb_color kRed = {180, 20, 20, 255};
-const rgb_color kLink = {40, 90, 170, 255};
-const rgb_color kHeading = {60, 60, 60, 255};
+// Text colours, derived from the system's document colours so dark themes work. Updated
+// before each render (UpdatePalette); every window computes the same values.
+rgb_color kText, kVerseNumber, kRed, kLink, kHeading, kBookmarked;
+
+rgb_color Mix(rgb_color a, rgb_color b, float t)
+{
+	return make_color((uint8)(a.red + (b.red - a.red) * t), (uint8)(a.green + (b.green - a.green) * t),
+		(uint8)(a.blue + (b.blue - a.blue) * t));
+}
+
+void UpdatePalette()
+{
+	rgb_color text = ui_color(B_DOCUMENT_TEXT_COLOR);
+	rgb_color back = ui_color(B_DOCUMENT_BACKGROUND_COLOR);
+	bool dark = back.Brightness() < 128;
+	kText = text;
+	kVerseNumber = Mix(text, back, 0.5f);
+	kHeading = Mix(text, back, 0.2f);
+	kRed = dark ? make_color(240, 110, 100) : make_color(180, 20, 20);
+	kLink = dark ? make_color(120, 170, 255) : make_color(40, 90, 170);
+	kBookmarked = dark ? make_color(255, 170, 60) : make_color(215, 120, 0);
+}
 
 }	// namespace
 
@@ -112,8 +129,10 @@ ChapterView::ChapterView(const char* name)
 }
 
 
-void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSize)
+void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSize,
+	const std::set<int>& bookmarked)
 {
+	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
 	RunBuilder b(fontSize);
@@ -138,8 +157,11 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSiz
 				if (b.Length() > 0)
 					b.Add(" ", BFont(be_plain_font), kText);
 				fVerses.push_back({v.verse, b.Length()});
-				b.Add(std::to_string(v.verse), numberFont, kVerseNumber);
-				b.Add("\xC2\xA0", numberFont, kVerseNumber);	// no-break space
+				rgb_color numberColor = bookmarked.count(v.verse) ? kBookmarked : kVerseNumber;
+				if (bookmarked.count(v.verse))
+					b.Add("\xE2\x97\x86", numberFont, numberColor);	// ◆
+				b.Add(std::to_string(v.verse), numberFont, numberColor);
+				b.Add("\xC2\xA0", numberFont, numberColor);	// no-break space
 				numbered = true;
 			}
 			bool afterNumber = false;
@@ -168,6 +190,7 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSiz
 
 void ChapterView::SetEntry(const std::string& xhtml, float fontSize)
 {
+	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
 	RunBuilder b(fontSize);
@@ -188,6 +211,7 @@ void ChapterView::SetEntry(const std::string& xhtml, float fontSize)
 
 void ChapterView::SetMessageText(const char* text, float fontSize)
 {
+	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
 	RunBuilder b(fontSize);
@@ -211,12 +235,50 @@ void ChapterView::ScrollToVerse(int verse)
 }
 
 
+void ChapterView::SyncToVerse(int verse)
+{
+	fSyncing = true;
+	ScrollToVerse(verse);
+	fLastTopVerse = VerseAtTop();
+	fSyncing = false;
+}
+
+
+void ChapterView::ScrollTo(BPoint where)
+{
+	BTextView::ScrollTo(where);
+	if (!fNotify || fSyncing || Window() == nullptr || fVerses.empty())
+		return;
+	int verse = VerseAtTop();
+	if (verse == fLastTopVerse)
+		return;
+	fLastTopVerse = verse;
+	BMessage msg(kMsgScrolled);
+	msg.AddInt32("verse", verse);
+	msg.AddPointer("view", this);
+	Window()->PostMessage(&msg);
+}
+
+
 int ChapterView::VerseAtTop() const
 {
 	int32 top = OffsetAt(Bounds().LeftTop() + BPoint(0, 4));
 	int verse = fVerses.empty() ? 0 : fVerses.front().verse;
 	for (const VerseStart& v : fVerses) {
 		if (v.offset > top)
+			break;
+		verse = v.verse;
+	}
+	return verse;
+}
+
+
+int ChapterView::VerseAt(BPoint where) const
+{
+	int32 offset = OffsetAt(where);
+	int verse = 0;
+	for (const VerseStart& v : fVerses) {
+		if (v.offset > offset)
 			break;
 		verse = v.verse;
 	}
@@ -246,6 +308,13 @@ void ChapterView::MouseDown(BPoint where)
 	int32 buttons = 0;
 	if (Window()->CurrentMessage() != nullptr)
 		Window()->CurrentMessage()->FindInt32("buttons", &buttons);
+	if ((buttons & B_SECONDARY_MOUSE_BUTTON) != 0 && VerseAt(where) > 0) {
+		BMessage msg(kMsgVerseMenu);
+		msg.AddInt32("verse", VerseAt(where));
+		msg.AddPoint("where", ConvertToScreen(where));
+		Window()->PostMessage(&msg);
+		return;
+	}
 	const LinkRange* link = (buttons & B_PRIMARY_MOUSE_BUTTON) ? LinkAt(where) : nullptr;
 	if (link == nullptr) {
 		BTextView::MouseDown(where);
@@ -255,6 +324,7 @@ void ChapterView::MouseDown(BPoint where)
 	msg.AddInt32("kind", (int32)link->link.kind);
 	msg.AddString("target", link->link.target.c_str());
 	msg.AddInt32("verse", link->verse);
+	msg.AddPointer("view", this);
 	Window()->PostMessage(&msg);
 }
 

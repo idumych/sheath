@@ -36,6 +36,7 @@ public:
 
 		ReaderState state;
 		state.module = settings.GetString("module", "");
+		state.parallel = settings.GetString("parallel", "");
 		state.book = settings.GetString("book", "John");
 		state.chapter = settings.GetInt32("chapter", 1);
 		state.verse = settings.GetInt32("verse", 0);
@@ -48,19 +49,10 @@ public:
 		BRect frame = settings.GetRect("frame", BRect(80, 60, 720, 700));
 		if (!BScreen().Frame().Intersects(frame))
 			frame = BRect(80, 60, 720, 700);
-		(new ReaderWindow(frame, &fLibrary, state))->Show();
-	}
-
-	void MessageReceived(BMessage* message) override
-	{
-		if (message->what == 'stat') {
-			// The reader window's state, sent when it closes.
-			BFile file(SettingsPath().Path(), B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
-			if (file.InitCheck() == B_OK)
-				message->Flatten(&file);
-			return;
-		}
-		BApplication::MessageReceived(message);
+		BPath bookmarks;
+		find_directory(B_USER_SETTINGS_DIRECTORY, &bookmarks, true);
+		bookmarks.Append("Sheath_bookmarks");
+		(new ReaderWindow(frame, &fLibrary, state, bookmarks.Path()))->Show();
 	}
 
 	void AboutRequested() override

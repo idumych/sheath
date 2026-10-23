@@ -4,9 +4,13 @@ A Bible reader for [Renku OS](https://github.com/RenkuOS/Source) and Haiku, buil
 [SWORD](https://crosswire.org/sword/) library. Loosely inspired by AndBible and
 [LinBible](https://github.com/idumych/linbible).
 
+- Downloads Bibles, commentaries and dictionaries from CrossWire (Bible ▸ Install modules…)
 - Any SWORD Bible module, in its own versification
 - Words of Christ in red, headings, footnotes
-- Strong's numbers that open the Greek or Hebrew dictionary entry
+- Strong's numbers that open the Greek or Hebrew dictionary entry, and find every verse with it
+- Search by words, exact phrase or regular expression, in the whole Bible, a testament or a book
+- A second Bible side by side, scrolled together verse by verse
+- Bookmarks; copy a verse with its reference (right-click a verse)
 - Go to a reference by typing it ("jn 3:16", "Psalm 23")
 
 ## Building
