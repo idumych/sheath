@@ -40,7 +40,12 @@ public:
 		state.book = settings.GetString("book", "John");
 		state.chapter = settings.GetInt32("chapter", 1);
 		state.verse = settings.GetInt32("verse", 0);
-		state.fontSize = settings.GetFloat("fontSize", 0);
+		state.style.size = settings.GetFloat("fontSize", 0);
+		// Default reading font: Noto Serif (ships with Haiku and Renku), as in LinBible.
+		state.style.family = settings.GetString("fontFamily",
+			ChapterView::HasFamily("Noto Serif") ? "Noto Serif" : "");
+		state.style.lineSpacing = settings.GetFloat("lineSpacing", 1.5f);
+		state.style.versePerLine = settings.GetBool("versePerLine", true);
 		state.options.strongs = settings.GetBool("Strong's numbers", false);
 		state.options.footnotes = settings.GetBool("Footnotes", true);
 		state.options.headings = settings.GetBool("Headings", true);

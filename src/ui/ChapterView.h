@@ -9,6 +9,14 @@
 #include "Markup.h"
 #include "Sword.h"
 
+// How chapters are drawn; set from the View menu.
+struct ReadingStyle {
+	std::string family;		// font family, "" = the system's plain font
+	float size = 16;
+	float lineSpacing = 1.5f;	// 1.0 = the font's own line height
+	bool versePerLine = true;	// each verse starts a new line, with a small gap
+};
+
 // Read-only, selectable chapter text. Verses are laid out as styled runs in a BTextView;
 // clicking a link (Strong's number, footnote, cross-reference) sends kMsgLinkClicked to the
 // window with "kind" (int32 LinkKind), "target" and "verse". A secondary click sends
@@ -22,10 +30,12 @@ public:
 	explicit ChapterView(const char* name);
 
 	// bookmarked: verse numbers drawn in the accent colour.
-	void SetChapter(const std::vector<sheath::VerseText>& verses, float fontSize,
+	void SetChapter(const std::vector<sheath::VerseText>& verses, const ReadingStyle& style,
 		const std::set<int>& bookmarked = std::set<int>());
-	void SetEntry(const std::string& xhtml, float fontSize);	// a dictionary entry
-	void SetMessageText(const char* text, float fontSize);	// "no modules installed" etc.
+	void SetEntry(const std::string& xhtml, const ReadingStyle& style);	// a dictionary entry
+	void SetMessageText(const char* text, const ReadingStyle& style);	// "no modules" etc.
+
+	static bool HasFamily(const char* family);
 
 	void ScrollToVerse(int verse);
 	void SyncToVerse(int verse);		// ScrollToVerse without sending kMsgScrolled
@@ -36,6 +46,7 @@ public:
 	int VerseAtTop() const;
 	int VerseAt(BPoint where) const;		// 0 if none
 
+	void Copy(BClipboard* clipboard) override;
 	void MouseDown(BPoint where) override;
 	void MouseMoved(BPoint where, uint32 transit, const BMessage* drag) override;
 

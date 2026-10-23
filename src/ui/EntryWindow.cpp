@@ -7,6 +7,8 @@
 
 #include "ChapterView.h"
 
+#include <algorithm>
+
 EntryWindow* EntryWindow::sWindow = nullptr;
 
 
@@ -29,14 +31,17 @@ EntryWindow::EntryWindow()
 }
 
 
-void EntryWindow::Show(const std::string& title, const std::string& xhtml, float fontSize,
+void EntryWindow::Show(const std::string& title, const std::string& xhtml, const ReadingStyle& style,
 	const std::string& strongs, BMessenger target)
 {
 	if (sWindow == nullptr)
 		sWindow = new EntryWindow();
 	BAutolock lock(sWindow);
 	sWindow->SetTitle(title.c_str());
-	sWindow->fText->SetEntry(xhtml, fontSize);
+	// Entries read better without the extra line spacing and verse layout.
+	ReadingStyle entryStyle = style;
+	entryStyle.lineSpacing = std::min(style.lineSpacing, 1.3f);
+	sWindow->fText->SetEntry(xhtml, entryStyle);
 	sWindow->fStrongs = strongs;
 	sWindow->fTarget = target;
 	if (strongs.empty() && !sWindow->fFind->IsHidden())

@@ -17,6 +17,7 @@
 #include <SplitView.h>
 #include <TextControl.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -49,6 +50,9 @@ enum {
 	kMsgToggleBookmark = 'tgbm',
 	kMsgOpenBookmark = 'opbm',
 	kMsgParallel = 'prll',
+	kMsgFont = 'font',
+	kMsgSpacing = 'spcg',
+	kMsgVersePerLine = 'vpln',
 };
 
 const char* kOptionNames[] = {"Strong's numbers", "Footnotes", "Headings", "Words of Christ in red"};
@@ -74,8 +78,10 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	fState(state),
 	fBookmarks(bookmarksPath)
 {
-	if (fState.fontSize <= 0)
-		fState.fontSize = be_plain_font->Size() * 1.35f;
+	if (fState.style.size <= 0)
+		fState.style.size = be_plain_font->Size() * 1.35f;
+	if (!fState.style.family.empty() && !ChapterView::HasFamily(fState.style.family.c_str()))
+		fState.style.family = "";
 
 	BMenuBar* menuBar = new BMenuBar("menu");
 	BMenu* app = new BMenu("Sheath");
@@ -97,6 +103,35 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	fViewMenu = new BMenu("View");
 	fViewMenu->AddItem(new BMenuItem("Larger text", new BMessage(kMsgBigger), '+'));
 	fViewMenu->AddItem(new BMenuItem("Smaller text", new BMessage(kMsgSmaller), '-'));
+	fFontMenu = new BMenu("Font");
+	fFontMenu->SetRadioMode(true);
+	int32 families = count_font_families();
+	for (int32 i = 0; i < families; i++) {
+		font_family family;
+		uint32 flags = 0;
+		if (get_font_family(i, &family, &flags) != B_OK || (flags & B_IS_FIXED) != 0)
+			continue;
+		BMessage* msg = new BMessage(kMsgFont);
+		msg->AddString("family", family);
+		BMenuItem* item = new BMenuItem(family, msg);
+		item->SetMarked(fState.style.family == family);
+		fFontMenu->AddItem(item);
+	}
+	fViewMenu->AddItem(fFontMenu);
+	fSpacingMenu = new BMenu("Line spacing");
+	fSpacingMenu->SetRadioMode(true);
+	for (float spacing : {1.0f, 1.2f, 1.4f, 1.5f, 1.6f, 1.8f, 2.0f}) {
+		BMessage* msg = new BMessage(kMsgSpacing);
+		msg->AddFloat("spacing", spacing);
+		char label[16];
+		snprintf(label, sizeof(label), "%.1f", spacing);
+		BMenuItem* item = new BMenuItem(label, msg);
+		item->SetMarked(std::fabs(spacing - fState.style.lineSpacing) < 0.05f);
+		fSpacingMenu->AddItem(item);
+	}
+	fViewMenu->AddItem(fSpacingMenu);
+	fVersePerLineItem = new BMenuItem("One verse per line", new BMessage(kMsgVersePerLine));
+	fViewMenu->AddItem(fVersePerLineItem);
 	fViewMenu->AddSeparatorItem();
 	fParallelMenu = new BMenu("Parallel Bible");
 	fParallelMenu->SetRadioMode(true);
@@ -105,7 +140,8 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	for (int i = 0; i < 4; i++) {
 		BMessage* msg = new BMessage(kMsgToggle);
 		msg->AddInt32("option", i);
-		fViewMenu->AddItem(new BMenuItem(kOptionNames[i], msg));
+		fOptionItems[i] = new BMenuItem(kOptionNames[i], msg);
+		fViewMenu->AddItem(fOptionItems[i]);
 	}
 	menuBar->AddItem(fViewMenu);
 
@@ -251,7 +287,10 @@ bool ReaderWindow::QuitRequested()
 	state.AddString("book", s.book.c_str());
 	state.AddInt32("chapter", s.chapter);
 	state.AddInt32("verse", s.verse);
-	state.AddFloat("fontSize", s.fontSize);
+	state.AddFloat("fontSize", s.style.size);
+	state.AddString("fontFamily", s.style.family.c_str());
+	state.AddFloat("lineSpacing", s.style.lineSpacing);
+	state.AddBool("versePerLine", s.style.versePerLine);
 	state.AddString("parallel", s.parallel.c_str());
 	for (int i = 0; i < 4; i++)
 		state.AddBool(kOptionNames[i], *OptionField(s.options, i));
@@ -390,20 +429,20 @@ void ReaderWindow::ShowChapter(int scrollToVerse)
 		fVerses.clear();
 		fText->SetMessageText("No Bible is installed yet.\n\n"
 			"Choose Bible \xE2\x96\xB8 Install modules\xE2\x80\xA6 to download one, "
-			"for example the King James Version (KJV).", fState.fontSize);
+			"for example the King James Version (KJV).", fState.style);
 		SetTitle("Sheath");
 		return;
 	}
 	fVerses = fLibrary->Chapter(fState.module, fState.book, fState.chapter, fState.options);
 	if (fVerses.empty()) {
-		fText->SetMessageText("This chapter is empty in this module.", fState.fontSize);
+		fText->SetMessageText("This chapter is empty in this module.", fState.style);
 	} else {
 		std::set<int> marked;
 		for (const Bookmark& b : fBookmarks.All()) {
 			if (b.book == fState.book && b.chapter == fState.chapter)
 				marked.insert(b.verse);
 		}
-		fText->SetChapter(fVerses, fState.fontSize, marked);
+		fText->SetChapter(fVerses, fState.style, marked);
 		if (scrollToVerse > 1)
 			fText->ScrollToVerse(scrollToVerse);
 	}
@@ -414,9 +453,9 @@ void ReaderWindow::ShowChapter(int scrollToVerse)
 	if (parallel) {
 		fVerses2 = fLibrary->Chapter(fState.parallel, fState.book, fState.chapter, fState.options);
 		if (fVerses2.empty())
-			fText2->SetMessageText("This chapter is empty in this module.", fState.fontSize);
+			fText2->SetMessageText("This chapter is empty in this module.", fState.style);
 		else
-			fText2->SetChapter(fVerses2, fState.fontSize);
+			fText2->SetChapter(fVerses2, fState.style);
 		fText2->SyncToVerse(fText->VerseAtTop());
 		if (fScroll2->IsHidden())
 			fScroll2->Show();
@@ -469,7 +508,7 @@ void ReaderWindow::OpenLink(int32 kind, const std::string& target, int verse, bo
 				entry = std::string("The ") + module + " dictionary isn't installed, or has no "
 					"entry " + target + ".";
 			}
-			EntryWindow::Show(title, entry, fState.fontSize, target, BMessenger(this));
+			EntryWindow::Show(title, entry, fState.style, target, BMessenger(this));
 			break;
 		}
 		case LinkKind::Footnote: {
@@ -477,7 +516,7 @@ void ReaderWindow::OpenLink(int32 kind, const std::string& target, int verse, bo
 				auto note = v.notes.find(target);
 				if (v.verse == verse && note != v.notes.end()) {
 					std::string title = "Note on " + FormatRef({fState.book, fState.chapter, verse});
-					EntryWindow::Show(title, note->second, fState.fontSize);
+					EntryWindow::Show(title, note->second, fState.style);
 				}
 			}
 			break;
@@ -496,11 +535,9 @@ void ReaderWindow::OpenLink(int32 kind, const std::string& target, int verse, bo
 
 void ReaderWindow::UpdateOptionItems()
 {
-	for (int i = 0; i < 4; i++) {
-		BMenuItem* item = fViewMenu->ItemAt(3 + i);
-		if (item != nullptr)
-			item->SetMarked(*OptionField(fState.options, i));
-	}
+	for (int i = 0; i < 4; i++)
+		fOptionItems[i]->SetMarked(*OptionField(fState.options, i));
+	fVersePerLineItem->SetMarked(fState.style.versePerLine);
 }
 
 
@@ -541,12 +578,25 @@ void ReaderWindow::MessageReceived(BMessage* message)
 		case kMsgBigger:
 		case kMsgSmaller: {
 			int verse = fText->VerseAtTop();
-			fState.fontSize += message->what == kMsgBigger ? 2 : -2;
-			if (fState.fontSize < 8)
-				fState.fontSize = 8;
+			fState.style.size += message->what == kMsgBigger ? 2 : -2;
+			if (fState.style.size < 8)
+				fState.style.size = 8;
 			ShowChapter(verse);
 			break;
 		}
+		case kMsgFont:
+			fState.style.family = message->GetString("family", "");
+			ShowChapter(fText->VerseAtTop());
+			break;
+		case kMsgSpacing:
+			fState.style.lineSpacing = message->GetFloat("spacing", 1.5f);
+			ShowChapter(fText->VerseAtTop());
+			break;
+		case kMsgVersePerLine:
+			fState.style.versePerLine = !fState.style.versePerLine;
+			UpdateOptionItems();
+			ShowChapter(fText->VerseAtTop());
+			break;
 		case kMsgToggle: {
 			int i = message->GetInt32("option", 0);
 			bool* field = OptionField(fState.options, i);

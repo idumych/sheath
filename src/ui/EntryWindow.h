@@ -5,8 +5,9 @@
 
 #include <string>
 
+#include "ChapterView.h"
+
 class BButton;
-class ChapterView;
 
 // A small floating window showing a dictionary entry or a footnote. One is reused for all
 // lookups so clicking through Strong's numbers doesn't pile up windows.
@@ -16,7 +17,7 @@ public:
 
 	// strongs: a Strong's number to offer "Find all verses" for ("" = no button). The button
 	// sends kMsgFindStrongs with "strongs" to `target`.
-	static void Show(const std::string& title, const std::string& xhtml, float fontSize,
+	static void Show(const std::string& title, const std::string& xhtml, const ReadingStyle& style,
 		const std::string& strongs = "", BMessenger target = BMessenger());
 
 	void MessageReceived(BMessage* message) override;

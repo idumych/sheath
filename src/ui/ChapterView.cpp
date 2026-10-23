@@ -1,5 +1,6 @@
 #include "ChapterView.h"
 
+#include <Clipboard.h>
 #include <Cursor.h>
 #include <Font.h>
 #include <Looper.h>
@@ -7,7 +8,9 @@
 #include <ScrollBar.h>
 #include <Window.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <cstring>
 
 using namespace sheath;
 
@@ -40,39 +43,76 @@ void UpdatePalette()
 
 
 // Collects text and per-run styles, then hands them to the BTextView in one go.
+//
+// Line spacing: a BTextView line is as tall as the tallest font on it, and the view has no
+// line-spacing setting. So after every space the builder adds a zero-width space (U+200B) in
+// a font `lineSpacing` times the text size: invisible, no width, so wrapping is unchanged,
+// but every line that holds one (all lines with a word boundary) gets taller.
 class ChapterView::RunBuilder {
 public:
-	explicit RunBuilder(float size) : fSize(size) {}
+	explicit RunBuilder(const ReadingStyle& style)
+		:
+		fStyle(style)
+	{
+		fBase = BaseFont(style);
+		fStrut = fBase;
+		fStrut.SetSize(style.size * std::max(1.0f, style.lineSpacing));
+	}
+
+	static BFont BaseFont(const ReadingStyle& style)
+	{
+		BFont font(be_plain_font);
+		if (!style.family.empty())
+			font.SetFamilyAndFace(style.family.c_str(), B_REGULAR_FACE);
+		font.SetSize(style.size);
+		return font;
+	}
 
 	int32 Length() const { return (int32)fText.size(); }
+	const BFont& Base() const { return fBase; }
 
-	void Add(const std::string& text, const BFont& font, rgb_color color)
+	// Adds text; spaces get the line-spacing strut unless `plain` (verse numbers, gaps).
+	void Add(const std::string& text, const BFont& font, rgb_color color, bool plain = false)
 	{
 		if (text.empty())
 			return;
-		Style s{Length(), font, color};
-		if (fStyles.empty() || !Same(fStyles.back(), s))
-			fStyles.push_back(s);
-		fText += text;
+		bool spaced = !plain && fStyle.lineSpacing > 1.01f;
+		size_t start = 0;
+		while (start < text.size()) {
+			size_t space = spaced ? text.find(' ', start) : std::string::npos;
+			size_t end = space == std::string::npos ? text.size() : space + 1;
+			Append(text.substr(start, end - start), font, color);
+			if (space != std::string::npos)
+				Append("\xE2\x80\x8B", fStrut, color);
+			start = end;
+		}
+	}
+
+	// A blank line `fraction` of a text line high (the gap between verses or paragraphs).
+	void Gap(float fraction)
+	{
+		BFont gap(fBase);
+		gap.SetSize(std::max(1.0f, fStyle.size * fraction));
+		Append("\n", gap, kText);
 	}
 
 	void AddRun(const Run& run, bool inHeading)
 	{
-		BFont font(be_plain_font);
-		float size = fSize;
+		BFont font(fBase);
+		float size = fStyle.size;
 		uint16 face = 0;
 		if (inHeading) {
 			face |= B_BOLD_FACE;
-			size = fSize * 1.1f;
+			size = fStyle.size * 1.1f;
 		}
 		if (run.style & kBold)
 			face |= B_BOLD_FACE;
 		if (run.style & (kItalic | kTransChange))
 			face |= B_ITALIC_FACE;
 		if (run.style & (kSmall | kSuperscript))
-			size = fSize * 0.7f;
+			size = fStyle.size * 0.7f;
 		if (run.style & kDivineName)
-			size = fSize * 0.85f;
+			size = fStyle.size * 0.85f;
 		font.SetSize(size);
 		if (face != 0)
 			font.SetFace(face);
@@ -100,10 +140,16 @@ public:
 		BTextView::FreeRunArray(runs);
 	}
 
-	float Size() const { return fSize; }
-
 private:
 	struct Style { int32 offset; BFont font; rgb_color color; };
+
+	void Append(const std::string& text, const BFont& font, rgb_color color)
+	{
+		Style s{Length(), font, color};
+		if (fStyles.empty() || !Same(fStyles.back(), s))
+			fStyles.push_back(s);
+		fText += text;
+	}
 
 	static bool Same(const Style& a, const Style& b)
 	{
@@ -111,7 +157,9 @@ private:
 			&& a.color.blue == b.color.blue;
 	}
 
-	float fSize;
+	ReadingStyle fStyle;
+	BFont fBase;
+	BFont fStrut;
 	std::string fText;
 	std::vector<Style> fStyles;
 };
@@ -129,15 +177,27 @@ ChapterView::ChapterView(const char* name)
 }
 
 
-void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSize,
+bool ChapterView::HasFamily(const char* family)
+{
+	int32 count = count_font_families();
+	for (int32 i = 0; i < count; i++) {
+		font_family name;
+		if (get_font_family(i, &name) == B_OK && strcmp(name, family) == 0)
+			return true;
+	}
+	return false;
+}
+
+
+void ChapterView::SetChapter(const std::vector<VerseText>& verses, const ReadingStyle& style,
 	const std::set<int>& bookmarked)
 {
 	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
-	RunBuilder b(fontSize);
-	BFont numberFont(be_bold_font);
-	numberFont.SetSize(fontSize * 0.65f);
+	RunBuilder b(style);
+	BFont numberFont(b.Base());
+	numberFont.SetSize(style.size * 0.6f);
 
 	for (const VerseText& v : verses) {
 		std::vector<Block> blocks = ParseXhtml(v.xhtml);
@@ -145,23 +205,31 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSiz
 		for (const Block& block : blocks) {
 			if (block.kind == Block::LineBreak) {
 				if (b.Length() > 0)
-					b.Add("\n", BFont(be_plain_font), kText);
+					b.Add("\n", b.Base(), kText, true);
 				continue;
 			}
 			bool heading = block.kind == Block::Heading;
 			if (heading) {
-				// A heading starts its own paragraph, with a blank line above it.
-				if (b.Length() > 0)
-					b.Add("\n\n", BFont(be_plain_font), kText);
+				// A heading starts its own paragraph, with a gap above it.
+				if (b.Length() > 0) {
+					b.Add("\n", b.Base(), kText, true);
+					b.Gap(0.6f);
+				}
 			} else if (!numbered) {
-				if (b.Length() > 0)
-					b.Add(" ", BFont(be_plain_font), kText);
+				if (b.Length() > 0) {
+					if (style.versePerLine) {
+						b.Add("\n", b.Base(), kText, true);
+						b.Gap(0.45f);
+					} else {
+						b.Add(" ", b.Base(), kText);
+					}
+				}
 				fVerses.push_back({v.verse, b.Length()});
 				rgb_color numberColor = bookmarked.count(v.verse) ? kBookmarked : kVerseNumber;
 				if (bookmarked.count(v.verse))
-					b.Add("\xE2\x97\x86", numberFont, numberColor);	// ◆
-				b.Add(std::to_string(v.verse), numberFont, numberColor);
-				b.Add("\xC2\xA0", numberFont, numberColor);	// no-break space
+					b.Add("\xE2\x97\x86", numberFont, numberColor, true);	// ◆
+				b.Add(std::to_string(v.verse), numberFont, numberColor, true);
+				b.Add("\xE2\x80\xAF", numberFont, numberColor, true);	// narrow no-break space
 				numbered = true;
 			}
 			bool afterNumber = false;
@@ -169,18 +237,15 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSiz
 				// Consecutive Strong's/morphology numbers would read as one number.
 				bool number = run.link.kind == LinkKind::Strongs || run.link.kind == LinkKind::Morph;
 				if (number && afterNumber)
-					b.Add(" ", numberFont, kText);
+					b.Add(" ", numberFont, kText, true);
 				afterNumber = number;
 				int32 start = b.Length();
 				b.AddRun(run, heading);
 				if (run.link.kind != LinkKind::None)
 					fLinks.push_back({start, b.Length(), run.link, v.verse});
 			}
-			if (heading) {
-				BFont plain(be_plain_font);
-				plain.SetSize(fontSize);
-				b.Add("\n", plain, kText);
-			}
+			if (heading)
+				b.Add("\n", b.Base(), kText, true);
 		}
 	}
 	b.ApplyTo(this);
@@ -188,15 +253,15 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSiz
 }
 
 
-void ChapterView::SetEntry(const std::string& xhtml, float fontSize)
+void ChapterView::SetEntry(const std::string& xhtml, const ReadingStyle& style)
 {
 	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
-	RunBuilder b(fontSize);
+	RunBuilder b(style);
 	for (const Block& block : ParseXhtml(xhtml)) {
 		if (b.Length() > 0)
-			b.Add("\n", BFont(be_plain_font), kText);
+			b.Add("\n", b.Base(), kText, true);
 		for (const Run& run : block.runs) {
 			int32 start = b.Length();
 			b.AddRun(run, block.kind == Block::Heading);
@@ -209,16 +274,39 @@ void ChapterView::SetEntry(const std::string& xhtml, float fontSize)
 }
 
 
-void ChapterView::SetMessageText(const char* text, float fontSize)
+void ChapterView::SetMessageText(const char* text, const ReadingStyle& style)
 {
 	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
-	RunBuilder b(fontSize);
-	BFont font(be_plain_font);
-	font.SetSize(fontSize);
-	b.Add(text, font, kHeading);
+	RunBuilder b(style);
+	b.Add(text, b.Base(), kHeading);
 	b.ApplyTo(this);
+}
+
+
+void ChapterView::Copy(BClipboard* clipboard)
+{
+	// The line-spacing struts are zero-width spaces; keep them out of copied text.
+	int32 start, end;
+	GetSelection(&start, &end);
+	if (start == end)
+		return;
+	std::string text(Text() + start, end - start);
+	std::string clean;
+	for (size_t i = 0; i < text.size(); i++) {
+		if (text.compare(i, 3, "\xE2\x80\x8B") == 0) {
+			i += 2;
+			continue;
+		}
+		clean += text[i];
+	}
+	if (clipboard->Lock()) {
+		clipboard->Clear();
+		clipboard->Data()->AddData("text/plain", B_MIME_TYPE, clean.c_str(), clean.size());
+		clipboard->Commit();
+		clipboard->Unlock();
+	}
 }
 
 

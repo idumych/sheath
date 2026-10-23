@@ -7,14 +7,15 @@
 #include <vector>
 
 #include "Bookmarks.h"
+#include "ChapterView.h"
 #include "Sword.h"
 
 class BButton;
 class BMenu;
 class BMenuField;
+class BMenuItem;
 class BPopUpMenu;
 class BTextControl;
-class ChapterView;
 class SearchWindow;
 
 struct ReaderState {
@@ -23,7 +24,7 @@ struct ReaderState {
 	std::string book = "Gen";
 	int chapter = 1;
 	int verse = 0;
-	float fontSize = 0;		// 0 = from be_plain_font
+	ReadingStyle style;		// style.size 0 = from be_plain_font
 	sheath::DisplayOptions options;
 };
 
@@ -74,6 +75,10 @@ private:
 	ChapterView* fText2;
 	BView* fScroll2;
 	BMenu* fParallelMenu;
+	BMenu* fFontMenu;
+	BMenu* fSpacingMenu;
+	BMenuItem* fVersePerLineItem;
+	BMenuItem* fOptionItems[4];
 	std::vector<sheath::VerseText> fVerses2;
 	SearchWindow* fSearch;
 };
