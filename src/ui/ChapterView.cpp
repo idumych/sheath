@@ -142,7 +142,13 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSiz
 				b.Add("\xC2\xA0", numberFont, kVerseNumber);	// no-break space
 				numbered = true;
 			}
+			bool afterNumber = false;
 			for (const Run& run : block.runs) {
+				// Consecutive Strong's/morphology numbers would read as one number.
+				bool number = run.link.kind == LinkKind::Strongs || run.link.kind == LinkKind::Morph;
+				if (number && afterNumber)
+					b.Add(" ", numberFont, kText);
+				afterNumber = number;
 				int32 start = b.Length();
 				b.AddRun(run, heading);
 				if (run.link.kind != LinkKind::None)
@@ -196,8 +202,9 @@ void ChapterView::ScrollToVerse(int verse)
 {
 	for (const VerseStart& v : fVerses) {
 		if (v.verse == verse) {
-			BPoint p = PointAt(v.offset);
-			ScrollTo(0, p.y > 12 ? p.y - 12 : 0);
+			// Scroll so the line holding the verse number is the first one shown.
+			BPoint p = PointAt(OffsetAt(LineAt(v.offset)));
+			ScrollTo(0, p.y > 4 ? p.y - 4 : 0);
 			return;
 		}
 	}
