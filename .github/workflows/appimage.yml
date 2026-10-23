@@ -50,15 +50,17 @@ jobs:
         run: sh packaging/appimage/build-appimage.sh
 
       - name: Wayland smoke test (headless Weston)
+        timeout-minutes: 10
         # Cosmoe picks its Wayland backend from WAYLAND_DISPLAY / COSMOE_BACKEND. Start the
         # AppImage on a headless Weston, check it stays up, and keep a screenshot to look at.
         run: |
-          sudo apt-get install -y weston
+          sudo DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y --no-install-recommends weston
           export XDG_RUNTIME_DIR=$(mktemp -d) && chmod 700 "$XDG_RUNTIME_DIR"
           mkdir -p wayland-smoke
           weston --backend=headless --renderer=pixman --width=1280 --height=800 \
             --socket=wl-ci --debug --idle-time=0 > wayland-smoke/weston.log 2>&1 &
           for i in $(seq 20); do [ -S "$XDG_RUNTIME_DIR/wl-ci" ] && break; sleep 0.5; done
+          [ -S "$XDG_RUNTIME_DIR/wl-ci" ] || { echo "weston did not start:"; cat wayland-smoke/weston.log; exit 1; }
           APP=$(ls ${{ steps.app.outputs.name }}-*.AppImage)
           env -u DISPLAY WAYLAND_DISPLAY=wl-ci COSMOE_BACKEND=wayland APPIMAGE_EXTRACT_AND_RUN=1 \
             HOME=$(mktemp -d) "./$APP" > wayland-smoke/app.log 2>&1 &
@@ -67,7 +69,7 @@ jobs:
           if ! kill -0 $PID 2>/dev/null; then
             echo "The app exited under Wayland:"; cat wayland-smoke/app.log; exit 1
           fi
-          (cd wayland-smoke && WAYLAND_DISPLAY=wl-ci weston-screenshooter) || echo "screenshot failed"
+          (cd wayland-smoke && WAYLAND_DISPLAY=wl-ci timeout 30 weston-screenshooter) || echo "screenshot failed"
           kill $PID; sleep 1
           ls -l wayland-smoke; tail -5 wayland-smoke/app.log
           ! grep -qiE 'error|assert|crash|segment|abort|exception' wayland-smoke/app.log
