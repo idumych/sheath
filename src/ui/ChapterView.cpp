@@ -197,7 +197,7 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, const Reading
 	fVerses.clear();
 	RunBuilder b(style);
 	BFont numberFont(b.Base());
-	numberFont.SetSize(style.size * 0.6f);
+	numberFont.SetSize(style.size * 0.68f);
 
 	for (const VerseText& v : verses) {
 		std::vector<Block> blocks = ParseXhtml(v.xhtml);
