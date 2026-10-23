@@ -39,7 +39,7 @@ const sword::VersificationMgr::System* sys =
 int n = sys->getBookCount();                       // books, OT then NT
 const sword::VersificationMgr::Book* b = sys->getBook(i);   // 0-based
 b->getOSISName();  b->getLongName();  b->getChapterMax();  b->getVerseMax(chapter);
-int idx = sys->getBookNumberByOSISName("John");    // 0-based, <0 if unknown
+int idx = sys->getBookNumberByOSISName("John");    // 1-based (!), <=0 if unknown; getBook() is 0-based
 // testament: index < sys->getBMAX()[0] -> OT (1) else NT (2)  (check versificationmgr.h)
 
 sword::VerseKey vk;                                  // parsing references

@@ -1,942 +1,455 @@
 #include "Markup.h"
-#include <map>
-#include <algorithm>
-#include <sstream>
+
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
+
+// A small reader for the XHTML that SWORD's FMT_XHTML filters produce. It isn't a general HTML
+// parser: it knows SWORD's vocabulary (passagestudy.jsp links, wordsOfJesus/divineName/
+// transChange classes, h1-h6 headings, <br/>) and keeps the text of everything else.
 
 namespace sheath {
 
-// ---- HTML entity decoding ----
-static std::string decodeEntities(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size(); ) {
-        if (s[i] == '&' && i + 1 < s.size()) {
-            // Find closing ;
-            size_t end = s.find(';', i + 1);
-            if (end == std::string::npos) {
-                out += s[i]; i++; continue;
-            }
-            std::string entity = s.substr(i + 1, end - i - 1);
-            if (entity == "nbsp" || entity == "shy") { out += ' '; i = end + 1; }
-            else if (entity == "lt") { out += '<'; i = end + 1; }
-            else if (entity == "gt") { out += '>'; i = end + 1; }
-            else if (entity == "amp") { out += '&'; i = end + 1; }
-            else if (entity == "quot") { out += '"'; i = end + 1; }
-            else if (entity == "apos") { out += '\''; i = end + 1; }
-            else if (entity == "mdash") { out += '\xE2\x80\x94'; i = end + 1; }
-            else if (entity == "ndash") { out += '\xE2\x80\x93'; i = end + 1; }
-            else if (entity == "laquo") { out += '\xC2\xAB'; i = end + 1; }
-            else if (entity == "raquo") { out += '\xC2\xBB'; i = end + 1; }
-            else if (entity == "bull") { out += '\xE2\x80\xA2'; i = end + 1; }
-            else if (entity == "hellip") { out += '\xE2\x80\xA6'; i = end + 1; }
-            else if (entity == "lsquo") { out += '\xE2\x80\x98'; i = end + 1; }
-            else if (entity == "rsquo") { out += '\xE2\x80\x99'; i = end + 1; }
-            else if (entity == "ldquo") { out += '\xE2\x80\x9C'; i = end + 1; }
-            else if (entity == "rdquo") { out += '\xE2\x80\x9D'; i = end + 1; }
-            else if (entity == "copy") { out += '\xC2\xA9'; i = end + 1; }
-            else if (entity == "reg") { out += '\xC2\xAE'; i = end + 1; }
-            else if (entity == "sup1") { out += '\xC2\xb9'; i = end + 1; }
-            else if (entity == "sup2") { out += '\xC2\xb2'; i = end + 1; }
-            else if (entity == "sup3") { out += '\xC2\xb3'; i = end + 1; }
-            else if (entity == "frac12") { out += '\xC2\xBD'; i = end + 1; }
-            else if (entity == "frac14") { out += '\xC2\xBC'; i = end + 1; }
-            else if (entity == "frac34") { out += '\xC2\xBE'; i = end + 1; }
-            else if (entity.size() >= 2 && entity[0] == '#' && entity.size() <= 7) {
-                // Numeric entity
-                int start = (entity[0] == '#' && entity[1] == 'x') ? 2 : 1;
-                int codepoint = 0;
-                try {
-                    std::string numStr = entity.substr(start);
-                    if (entity[1] == 'x') codepoint = std::stoi(numStr, nullptr, 16);
-                    else codepoint = std::stoi(numStr);
-                } catch (...) {
-                    out += s[i]; i++; continue;
-                }
-                // Encode as UTF-8
-                if (codepoint < 0x80) {
-                    out += static_cast<char>(codepoint);
-                } else if (codepoint < 0x800) {
-                    out += static_cast<char>(0xC0 | (codepoint >> 6));
-                    out += static_cast<char>(0x80 | (codepoint & 0x3F));
-                } else {
-                    out += static_cast<char>(0xE0 | (codepoint >> 12));
-                    out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-                    out += static_cast<char>(0x80 | (codepoint & 0x3F));
-                }
-                i = end + 1;
-            }
-            else {
-                // Unknown entity - output as-is without & and ;
-                out += s.substr(i, end - i + 1);
-                i = end + 1;
-            }
-        } else {
-            out += s[i]; i++;
-        }
-    }
-    return out;
+namespace {
+
+void AppendUtf8(std::string& out, unsigned long cp)
+{
+	if (cp < 0x80) {
+		out += (char)cp;
+	} else if (cp < 0x800) {
+		out += (char)(0xC0 | (cp >> 6));
+		out += (char)(0x80 | (cp & 0x3F));
+	} else if (cp < 0x10000) {
+		out += (char)(0xE0 | (cp >> 12));
+		out += (char)(0x80 | ((cp >> 6) & 0x3F));
+		out += (char)(0x80 | (cp & 0x3F));
+	} else if (cp < 0x110000) {
+		out += (char)(0xF0 | (cp >> 18));
+		out += (char)(0x80 | ((cp >> 12) & 0x3F));
+		out += (char)(0x80 | ((cp >> 6) & 0x3F));
+		out += (char)(0x80 | (cp & 0x3F));
+	}
 }
 
-// ---- Simple XML/XHTML parser ----
+// Decodes the entity starting at s[i] == '&'. Returns the length consumed, 0 if not an entity.
+size_t DecodeEntity(const std::string& s, size_t i, std::string& out)
+{
+	size_t semi = s.find(';', i);
+	if (semi == std::string::npos || semi - i > 10)
+		return 0;
+	std::string name = s.substr(i + 1, semi - i - 1);
+	static const struct { const char* name; unsigned long cp; } kNamed[] = {
+		{"amp", '&'}, {"lt", '<'}, {"gt", '>'}, {"quot", '"'}, {"apos", '\''},
+		{"nbsp", 0xA0}, {"mdash", 0x2014}, {"ndash", 0x2013}, {"lsquo", 0x2018},
+		{"rsquo", 0x2019}, {"ldquo", 0x201C}, {"rdquo", 0x201D}, {"hellip", 0x2026},
+		{"para", 0xB6},
+	};
+	if (!name.empty() && name[0] == '#') {
+		bool hex = name.size() > 1 && (name[1] == 'x' || name[1] == 'X');
+		const char* digits = name.c_str() + (hex ? 2 : 1);
+		char* end = nullptr;
+		unsigned long cp = std::strtoul(digits, &end, hex ? 16 : 10);
+		if (end == digits || *end != '\0')
+			return 0;
+		AppendUtf8(out, cp);
+		return semi - i + 1;
+	}
+	for (const auto& e : kNamed) {
+		if (name == e.name) {
+			AppendUtf8(out, e.cp);
+			return semi - i + 1;
+		}
+	}
+	return 0;
+}
 
-struct TagInfo {
-    std::string name;
-    std::map<std::string, std::string> attrs;
-    bool selfClosing = false;
+std::string DecodeEntities(const std::string& s)
+{
+	std::string out;
+	for (size_t i = 0; i < s.size(); i++) {
+		if (s[i] == '&') {
+			size_t n = DecodeEntity(s, i, out);
+			if (n > 0) {
+				i += n - 1;
+				continue;
+			}
+		}
+		out += s[i];
+	}
+	return out;
+}
+
+std::string UrlDecode(const std::string& s)
+{
+	std::string out;
+	for (size_t i = 0; i < s.size(); i++) {
+		if (s[i] == '+') {
+			out += ' ';
+		} else if (s[i] == '%' && i + 2 < s.size() && std::isxdigit((unsigned char)s[i + 1])
+				&& std::isxdigit((unsigned char)s[i + 2])) {
+			out += (char)std::strtol(s.substr(i + 1, 2).c_str(), nullptr, 16);
+			i += 2;
+		} else {
+			out += s[i];
+		}
+	}
+	return out;
+}
+
+// Value of a query parameter in a passagestudy.jsp?action=...&type=...&value=... link.
+std::string QueryParam(const std::string& href, const std::string& key)
+{
+	size_t q = href.find('?');
+	if (q == std::string::npos)
+		return "";
+	size_t pos = q + 1;
+	while (pos < href.size()) {
+		size_t amp = href.find('&', pos);
+		std::string pair = href.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+		size_t eq = pair.find('=');
+		if (eq != std::string::npos && pair.substr(0, eq) == key)
+			return UrlDecode(pair.substr(eq + 1));
+		if (amp == std::string::npos)
+			break;
+		pos = amp + 1;
+	}
+	return "";
+}
+
+// Some SWORD builds write Strong's numbers with locale digits (Arabic-Indic, U+0660..0669).
+std::string AsciiDigits(const std::string& s)
+{
+	std::string out;
+	for (size_t i = 0; i < s.size(); i++) {
+		unsigned char c = s[i];
+		unsigned char next = i + 1 < s.size() ? s[i + 1] : 0;
+		if (c == 0xD9 && next >= 0xA0 && next <= 0xA9) {
+			out += (char)('0' + next - 0xA0);
+			i++;
+		} else {
+			out += (char)c;
+		}
+	}
+	return out;
+}
+
+Link LinkFromHref(const std::string& rawHref)
+{
+	std::string href = DecodeEntities(rawHref);
+	Link link;
+	std::string action = QueryParam(href, "action");
+	std::string value = AsciiDigits(QueryParam(href, "value"));
+	std::string type = QueryParam(href, "type");
+	if (action == "showStrongs") {
+		link.kind = LinkKind::Strongs;
+		if (!value.empty() && std::isdigit((unsigned char)value[0]))
+			value = (type == "Hebrew" ? "H" : "G") + value;
+		link.target = value;
+	} else if (action == "showMorph") {
+		link.kind = LinkKind::Morph;
+		link.target = type.empty() ? value : type + ":" + value;
+	} else if (action == "showNote") {
+		link.kind = type == "x" ? LinkKind::CrossRef : LinkKind::Footnote;
+		link.target = value;
+	} else if (action == "showRef") {
+		link.kind = LinkKind::CrossRef;
+		link.target = value;
+	} else if (!href.empty()) {
+		link.kind = LinkKind::Url;
+		link.target = href;
+	}
+	return link;
+}
+
+struct Tag {
+	std::string name;	// lower case, without '/'
+	bool closing = false, selfClosing = false;
+	std::string cls, href;
 };
 
-static std::string trim(const std::string& s) {
-    size_t start = s.find_first_not_of(" \t\n\r");
-    if (start == std::string::npos) return "";
-    size_t end = s.find_last_not_of(" \t\n\r");
-    return s.substr(start, end - start + 1);
+std::string Attr(const std::string& tag, const char* name)
+{
+	std::string key = std::string(name) + "=";
+	size_t p = 0;
+	while ((p = tag.find(key, p)) != std::string::npos) {
+		bool wordStart = p > 0 && std::isspace((unsigned char)tag[p - 1]);
+		p += key.size();
+		if (!wordStart)
+			continue;
+		if (p >= tag.size())
+			return "";
+		char quote = tag[p];
+		if (quote == '"' || quote == '\'') {
+			size_t end = tag.find(quote, p + 1);
+			return tag.substr(p + 1, end == std::string::npos ? std::string::npos : end - p - 1);
+		}
+		size_t end = tag.find_first_of(" \t\r\n/>", p);
+		return tag.substr(p, end == std::string::npos ? std::string::npos : end - p);
+	}
+	return "";
 }
 
-static std::string collapseWhitespace(const std::string& s) {
-    std::string out;
-    bool inSpace = false;
-    for (char c : s) {
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-            if (!inSpace && !out.empty()) {
-                out += ' ';
-                inSpace = true;
-            }
-        } else {
-            out += c;
-            inSpace = false;
-        }
-    }
-    // Trim trailing space
-    if (!out.empty() && out.back() == ' ') out.pop_back();
-    return out;
+Tag ParseTag(const std::string& body)
+{
+	Tag t;
+	size_t i = 0;
+	if (i < body.size() && body[i] == '/') {
+		t.closing = true;
+		i++;
+	}
+	while (i < body.size() && !std::isspace((unsigned char)body[i]) && body[i] != '/')
+		t.name += (char)std::tolower((unsigned char)body[i++]);
+	t.selfClosing = !body.empty() && body.back() == '/';
+	t.cls = Attr(body, "class");
+	t.href = Attr(body, "href");
+	return t;
 }
 
-static TagInfo parseTag(const std::string& tagContent, size_t& pos) {
-    TagInfo ti;
-    std::string content = tagContent;
-    
-    // Check if self-closing
-    if (!content.empty() && content.back() == '/') {
-        ti.selfClosing = true;
-        content.pop_back();
-    }
-    
-    // Check if closing tag
-    size_t nameStart = 0;
-    if (!content.empty() && content[0] == '/') {
-        nameStart = 1;
-    }
-    
-    // Extract tag name
-    size_t spacePos = content.find_first_of(" \t\n\r/>");
-    if (spacePos == std::string::npos) {
-        ti.name = content.substr(nameStart);
-        return ti;
-    }
-    ti.name = content.substr(nameStart, spacePos - nameStart);
-    
-    // Extract attributes
-    std::string rest = content.substr(spacePos);
-    size_t attrStart = 0;
-    while (attrStart < rest.size()) {
-        // Skip whitespace
-        while (attrStart < rest.size() && (rest[attrStart] == ' ' || rest[attrStart] == '\t' || rest[attrStart] == '\n' || rest[attrStart] == '\r')) {
-            attrStart++;
-        }
-        if (attrStart >= rest.size() || rest[attrStart] == '/' || rest[attrStart] == '>') break;
-        
-        // Attribute name
-        size_t eqPos = rest.find('=', attrStart);
-        size_t attrEnd = rest.find_first_of(" \t\n\r/>", attrStart);
-        if (eqPos == std::string::npos || eqPos > attrEnd) {
-            // Boolean attribute
-            ti.attrs[rest.substr(attrStart, attrEnd - attrStart)] = "";
-            attrStart = attrEnd;
-            continue;
-        }
-        
-        std::string attrName = rest.substr(attrStart, eqPos - attrStart);
-        attrStart = eqPos + 1;
-        
-        // Skip whitespace after =
-        while (attrStart < rest.size() && rest[attrStart] == ' ') attrStart++;
-        
-        // Quoted value
-        if (attrStart < rest.size() && (rest[attrStart] == '"' || rest[attrStart] == '\'')) {
-            char quote = rest[attrStart];
-            attrStart++;
-            size_t valEnd = rest.find(quote, attrStart);
-            ti.attrs[attrName] = rest.substr(attrStart, valEnd - attrStart);
-            attrStart = valEnd + 1;
-        } else {
-            // Unquoted value
-            size_t valEnd = rest.find_first_of(" \t\n\r/>", attrStart);
-            ti.attrs[attrName] = rest.substr(attrStart, valEnd - attrStart);
-            attrStart = valEnd;
-        }
-    }
-    
-    return ti;
+bool HasClass(const std::string& cls, const char* name)
+{
+	size_t n = std::strlen(name), p = 0;
+	while ((p = cls.find(name, p)) != std::string::npos) {
+		bool startOk = p == 0 || std::isspace((unsigned char)cls[p - 1]);
+		bool endOk = p + n == cls.size() || std::isspace((unsigned char)cls[p + n]);
+		if (startOk && endOk)
+			return true;
+		p += n;
+	}
+	return false;
 }
 
-// Collect all text content from child elements, ignoring the tag itself
-static std::string collectText(const std::string& html, size_t& pos,
-                                const std::string& closeTag) {
-    std::string text;
-    while (pos < html.size()) {
-        if (html[pos] == '<') {
-            // Check for closing tag
-            size_t closeStart = pos;
-            size_t closeEnd = html.find('>', pos);
-            if (closeEnd == std::string::npos) break;
-            std::string closeContent = html.substr(closeStart + 1, closeEnd - closeStart - 1);
-            // Strip leading /
-            if (!closeContent.empty() && closeContent[0] == '/') closeContent = closeContent.substr(1);
-            // Strip attributes
-            size_t sp = closeContent.find_first_of(" \t\n\r");
-            std::string closeName = (sp != std::string::npos) ? closeContent.substr(0, sp) : closeContent;
-            if (closeName == closeTag) {
-                pos = closeEnd + 1;
-                return text;
-            }
-            // Opening tag - find its end and recurse
-            size_t tagEnd = html.find('>', pos);
-            if (tagEnd == std::string::npos) { pos++; continue; }
-            std::string tagContent = html.substr(pos + 1, tagEnd - pos - 1);
-            
-            // Check if self-closing
-            bool selfClose = false;
-            if (!tagContent.empty() && tagContent.back() == '/') {
-                selfClose = true;
-            }
-            
-            // Determine tag name
-            std::string tagName;
-            size_t nameStart = (tagContent[0] == '/') ? 1 : 0;
-            size_t ns = tagContent.find_first_of(" \t\n\r/>", nameStart);
-            tagName = tagContent.substr(nameStart, ns - nameStart);
-            
-            // Known inline formatting tags - process specially
-            if (tagName == "milestone" || tagName == "note" || tagName == "ref" ||
-                tagName == "chapter" || tagName == "div" || tagName == "head" ||
-                tagName == "h" || tagName == "title" || tagName == "headitem" ||
-                tagName == "hi" || tagName == "label" || tagName == "noteRef" ||
-                tagName == "xref" || tagName == "indexEntry" || tagName == "indexItem" ||
-                tagName == "noteNote") {
-                // Skip self-closing tags entirely
-                if (selfClose || tagName == "milestone" || tagName == "noteRef" ||
-                    tagName == "xref" || tagName == "ref" || tagName == "chapter" ||
-                    tagName == "note" || tagName == "noteNote" || tagName == "title") {
-                    // Find the closing tag for non-self-closing
-                    if (!selfClose && tagName != "milestone") {
-                        pos = tagEnd + 1;
-                        // Skip content up to closing tag
-                        std::string closed = "/" + tagName;
-                        // Simple skip - find the closing tag
-                        std::string closingTagStr = "<" + closed;
-                        size_t ctag = html.find(closingTagStr, pos);
-                        if (ctag != std::string::npos) {
-                            size_t ctend = html.find('>', ctag);
-                            if (ctend != std::string::npos) {
-                                pos = ctend + 1;
-                            } else {
-                                pos = html.size();
-                            }
-                        } else {
-                            pos = html.size();
-                        }
-                    } else {
-                        pos = tagEnd + 1;
-                    }
-                    continue;
-                }
-            }
-            
-            // For inline tags with content, recurse to get their text
-            // <w>, <divineName>, <transChange>, <q>, <sup>, <em>, <b>, <italic>, etc.
-            if (tagName == "w" || tagName == "divineName" || tagName == "transChange" ||
-                tagName == "q" || tagName == "sup" || tagName == "sub" ||
-                tagName == "italic" || tagName == "emphasis" || tagName == "bold" ||
-                tagName == "b" || tagName == "i" || tagName == "u" ||
-                tagName == "span" || tagName == "ob" || tagName == "oe" ||
-                tagName == "wg" || tagName == "lex" || tagName == "orth" ||
-                tagName == "pron" || tagName == "def" || tagName == "entryFree" ||
-                tagName == "lb" || tagName == "lb/" || tagName == "p" ||
-                tagName == "lg" || tagName == "l" || tagName == "tr" ||
-                tagName == "td" || tagName == "th") {
-                // Recurse into tag content
-                pos = tagEnd + 1;
-                std::string inner = collectText(html, pos, tagName);
-                text += inner;
-                continue;
-            }
-            
-            // For other tags (like <chapter>, <div>, <head>, etc.) that we want to skip
-            if (selfClose) {
-                pos = tagEnd + 1;
-                continue;
-            }
-            
-            // Skip the tag content
-            pos = tagEnd + 1;
-            // Find closing tag
-            std::string closed = "/" + tagName;
-            size_t ctag = html.find("<" + closed, pos);
-            if (ctag != std::string::npos) {
-                size_t ctend = html.find('>', ctag);
-                if (ctend != std::string::npos) {
-                    pos = ctend + 1;
-                } else {
-                    pos = html.size();
-                }
-            } else {
-                pos = html.size();
-            }
-        } else {
-            text += html[pos];
-            pos++;
-        }
-    }
-    return text;
+bool IsHeading(const std::string& name)
+{
+	return name.size() == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6';
 }
 
-// ---- Main parser ----
-
-// Parse attributes from a tag string and return (strongs_target, morph_target, href, style_flags)
-static std::pair<std::string, std::string> parseStrongMorph(const std::string& tagContent) {
-    std::string strongs;
-    std::string morph;
-    
-    // Find standalone strong: attribute (not inside another attribute's value)
-    size_t pos = 0;
-    while ((pos = tagContent.find("strong:", pos)) != std::string::npos) {
-        // Ensure "strong:" is a standalone attribute
-        bool standalone = (pos == 0 || std::isspace(static_cast<unsigned char>(tagContent[pos - 1])));
-        if (standalone) {
-            size_t valStart = pos + 7;
-            size_t valEnd = tagContent.find_first_of(" \t\n\r/>", valStart);
-            if (valEnd == std::string::npos) valEnd = tagContent.size();
-            std::string val = tagContent.substr(valStart, valEnd - valStart);
-            if (!val.empty() && val[0] != ':') {
-                strongs = val;
-                break;
-            }
-        }
-        pos++;
-    }
-    
-    // Find morph attribute (like morph="robinson:V-PAI-3S")
-    pos = tagContent.find("morph=");
-    if (pos != std::string::npos) {
-        pos += 6;
-        if (pos < tagContent.size() && (tagContent[pos] == '"' || tagContent[pos] == '\'')) {
-            char quote = tagContent[pos];
-            pos++;
-            size_t valEnd = tagContent.find(quote, pos);
-            if (valEnd != std::string::npos) {
-                morph = tagContent.substr(pos, valEnd - pos);
-            }
-        }
-    }
-    
-    return {strongs, morph};
+bool IsBlockTag(const std::string& name)
+{
+	return name == "p" || name == "div" || name == "li" || name == "blockquote";
 }
 
-static unsigned parseInlineStyle(const std::string& tagContent) {
-    unsigned style = 0;
-    
-    // Check for type="added" in transChange
-    size_t typePos = tagContent.find("type=");
-    if (typePos != std::string::npos) {
-        typePos += 5;
-        if (typePos < tagContent.size()) {
-            char quote = 0;
-            if (tagContent[typePos] == '"' || tagContent[typePos] == '\'') {
-                quote = tagContent[typePos];
-                typePos++;
-            }
-            size_t valEnd = (quote) ? tagContent.find(quote, typePos) : 
-                                   tagContent.find_first_of(" \t\n\r/>", typePos);
-            if (valEnd != std::string::npos) {
-                std::string typeVal = tagContent.substr(typePos, valEnd - typePos);
-                if (typeVal == "added" || typeVal == "added") {
-                    style |= kTransChange;
-                }
-            }
-        }
-    }
-    
-    // Check for rend attribute
-    typePos = tagContent.find("rend=");
-    if (typePos != std::string::npos) {
-        typePos += 5;
-        if (typePos < tagContent.size() && (tagContent[typePos] == '"' || tagContent[typePos] == '\'')) {
-            char quote = tagContent[typePos];
-            typePos++;
-            size_t valEnd = tagContent.find(quote, typePos);
-            if (valEnd != std::string::npos) {
-                std::string rendVal = tagContent.substr(typePos, valEnd - typePos);
-                if (rendVal == "italic" || rendVal == "weak") style |= kItalic;
-                if (rendVal == "bold") style |= kBold;
-            }
-        }
-    }
-    
-    // Check for type attribute on milestone (skip these)
-    
-    return style;
+class Builder {
+public:
+	std::vector<Block> blocks;
+
+	void Text(const std::string& text, unsigned style, const Link& link)
+	{
+		for (size_t i = 0; i < text.size(); i++) {
+			char c = text[i];
+			if (std::isspace((unsigned char)c)) {
+				pendingSpace = true;
+				continue;
+			}
+			// The pilcrow is OSIS paragraph markup; plain renderings drop it.
+			if ((unsigned char)c == 0xC2 && i + 1 < text.size()
+					&& (unsigned char)text[i + 1] == 0xB6) {
+				i++;
+				continue;
+			}
+			Block& b = Current();
+			// A space between runs gets only what both sides share: "the <i>word</i> and"
+			// keeps the space out of the italic run.
+			if (pendingSpace && !b.runs.empty()) {
+				const Run& prev = b.runs.back();
+				bool sameLink = prev.link.kind == link.kind && prev.link.target == link.target;
+				Append(b, " ", prev.style & style, sameLink ? link : Link());
+			}
+			pendingSpace = false;
+			Append(b, std::string(1, c), style, link);
+		}
+	}
+
+	// Starts a block of the given kind; an empty current block is reused.
+	void Start(Block::Kind kind)
+	{
+		pendingSpace = false;
+		if (!blocks.empty() && blocks.back().runs.empty() && blocks.back().kind != Block::LineBreak) {
+			blocks.back().kind = kind;
+			return;
+		}
+		blocks.push_back(Block());
+		blocks.back().kind = kind;
+	}
+
+	void LineBreak()
+	{
+		pendingSpace = false;
+		if (!blocks.empty() && blocks.back().runs.empty() && blocks.back().kind != Block::LineBreak)
+			blocks.pop_back();
+		if (blocks.empty() || blocks.back().kind == Block::LineBreak)
+			return;
+		Block br;
+		br.kind = Block::LineBreak;
+		blocks.push_back(br);
+	}
+
+	void Finish()
+	{
+		while (!blocks.empty() && blocks.back().runs.empty())
+			blocks.pop_back();
+	}
+
+private:
+	bool pendingSpace = false;
+
+	Block& Current()
+	{
+		if (blocks.empty() || blocks.back().kind == Block::LineBreak)
+			blocks.push_back(Block());
+		return blocks.back();
+	}
+
+	void Append(Block& b, const std::string& s, unsigned style, const Link& link)
+	{
+		if (!b.runs.empty()) {
+			Run& last = b.runs.back();
+			if (last.style == style && last.link.kind == link.kind
+					&& last.link.target == link.target) {
+				last.text += s;
+				return;
+			}
+		}
+		b.runs.push_back(Run{s, style, link});
+	}
+};
+
+struct Frame { std::string name; unsigned style; Link link; bool heading; bool decor; };
+
+}	// namespace
+
+
+std::vector<Block> ParseXhtml(const std::string& xhtml)
+{
+	Builder out;
+	std::vector<Frame> stack;
+	unsigned style = 0;
+	Link link;
+	bool decor = false;		// inside SWORD's "<em class=strongs>&lt;<a>N</a>&gt;</em>"
+	std::string text;
+
+	auto flush = [&]() {
+		if (text.empty())
+			return;
+		if (decor && link.kind == LinkKind::None) {
+			std::string kept;
+			for (char ch : text) {
+				if (ch != '<' && ch != '>')
+					kept += ch;
+			}
+			text = kept;
+		}
+		if (style & kDivineName) {
+			for (char& c : text)
+				c = (char)std::toupper((unsigned char)c);
+		}
+		out.Text(text, style, link);
+		text.clear();
+	};
+
+	for (size_t i = 0; i < xhtml.size(); i++) {
+		char c = xhtml[i];
+		if (c == '&') {
+			size_t n = DecodeEntity(xhtml, i, text);
+			if (n > 0)
+				i += n - 1;
+			else
+				text += c;
+			continue;
+		}
+		if (c != '<') {
+			text += c;
+			continue;
+		}
+		if (xhtml.compare(i, 4, "<!--") == 0) {
+			size_t end = xhtml.find("-->", i);
+			i = end == std::string::npos ? xhtml.size() : end + 2;
+			continue;
+		}
+		size_t end = xhtml.find('>', i);
+		if (end == std::string::npos) {
+			text += xhtml.substr(i);
+			break;
+		}
+		Tag tag = ParseTag(xhtml.substr(i + 1, end - i - 1));
+		i = end;
+		if (tag.name.empty() || tag.name[0] == '!' || tag.name[0] == '?')
+			continue;
+		flush();
+
+		if (tag.name == "br") {
+			out.LineBreak();
+			continue;
+		}
+		if (tag.name == "head" || tag.name == "style" || tag.name == "script") {
+			if (!tag.closing && !tag.selfClosing) {
+				size_t close = xhtml.find("</" + tag.name, i);
+				size_t gt = close == std::string::npos ? close : xhtml.find('>', close);
+				i = gt == std::string::npos ? xhtml.size() : gt;
+			}
+			continue;
+		}
+
+		if (tag.closing) {
+			for (size_t k = stack.size(); k > 0; k--) {
+				if (stack[k - 1].name != tag.name)
+					continue;
+				bool heading = stack[k - 1].heading;
+				style = stack[k - 1].style;
+				link = stack[k - 1].link;
+				decor = stack[k - 1].decor;
+				stack.resize(k - 1);
+				if (heading || IsBlockTag(tag.name))
+					out.Start(Block::Paragraph);
+				break;
+			}
+			continue;
+		}
+		if (tag.selfClosing)
+			continue;
+
+		bool heading = IsHeading(tag.name) || HasClass(tag.cls, "title")
+			|| HasClass(tag.cls, "heading");
+		stack.push_back(Frame{tag.name, style, link, heading, decor});
+		if (heading)
+			out.Start(Block::Heading);
+		else if (IsBlockTag(tag.name))
+			out.Start(Block::Paragraph);
+
+		if (tag.name == "i" || tag.name == "em" || tag.name == "cite")
+			style |= kItalic;
+		else if (tag.name == "b" || tag.name == "strong")
+			style |= kBold;
+		else if (tag.name == "small")
+			style |= kSmall;
+		else if (tag.name == "sup")
+			style |= kSuperscript;
+		else if (tag.name == "a")
+			link = LinkFromHref(tag.href);
+		if (HasClass(tag.cls, "strongs") || HasClass(tag.cls, "morph"))
+			decor = true;
+		if (HasClass(tag.cls, "wordsOfJesus"))
+			style |= kRedLetter;
+		if (HasClass(tag.cls, "divineName"))
+			style |= kDivineName;
+		if (HasClass(tag.cls, "transChange"))
+			style |= kTransChange;
+	}
+	flush();
+	out.Finish();
+	return out.blocks;
 }
 
-std::vector<Block> ParseXhtml(const std::string& xhtml) {
-    std::vector<Block> blocks;
-    Block currentBlock;
-    currentBlock.kind = Block::Paragraph;
-    std::string currentText;
-    unsigned currentStyle = 0;
-    Link currentLink;
-    
-    auto flushRun = [&]() {
-        std::string text = trim(currentText);
-        if (text.empty()) {
-            // Still flush if we have a link (for Strong's links on otherwise-empty words)
-            if (currentLink.kind != LinkKind::None) {
-                Run r;
-                r.text = ""; // Empty text but with a link
-                r.style = currentStyle;
-                r.link = currentLink;
-                currentBlock.runs.push_back(r);
-            }
-        } else {
-            text = decodeEntities(text);
-            text = collapseWhitespace(text);
-            if (!text.empty()) {
-                Run r;
-                r.text = std::move(text);
-                r.style = currentStyle;
-                r.link = currentLink;
-                currentBlock.runs.push_back(r);
-            }
-        }
-    };
-    
-    auto flushBlock = [&]() {
-        if (!currentBlock.runs.empty()) {
-            // Merge adjacent runs with same style+link
-            std::vector<Run> merged;
-            for (auto& r : currentBlock.runs) {
-                if (!merged.empty() && merged.back().style == r.style &&
-                    merged.back().link.kind == r.link.kind &&
-                    merged.back().link.target == r.link.target) {
-                    merged.back().text += r.text;
-                } else {
-                    merged.push_back(r);
-                }
-            }
-            currentBlock.runs = std::move(merged);
-            blocks.push_back(std::move(currentBlock));
-        }
-    };
-    
-    // Process the XHTML character by character
-    size_t pos = 0;
-    while (pos < xhtml.size()) {
-        if (xhtml[pos] == '<') {
-            // Find end of tag
-            size_t tagEnd = xhtml.find('>', pos);
-            if (tagEnd == std::string::npos) break;
-            
-            std::string tagContent = xhtml.substr(pos + 1, tagEnd - pos - 1);
-            bool selfClosing = false;
-            if (!tagContent.empty() && tagContent.back() == '/') {
-                selfClosing = true;
-            }
-            
-            // Check if closing tag
-            std::string tagName;
-            size_t nameStart = 0;
-            if (!tagContent.empty() && tagContent[0] == '/') {
-                tagName = tagContent.substr(1);
-                nameStart = 1;
-            } else {
-                tagName = tagContent.substr(0);
-                nameStart = 0;
-            }
-            size_t sp = tagName.find_first_of(" \t\n\r/>");
-            tagName = (sp != std::string::npos) ? tagName.substr(0, sp) : tagName;
-            
-            // Flush current text run before processing tag
-            flushRun();
-            currentText.clear();
-            currentStyle = 0;
-            currentLink.kind = LinkKind::None;
-            
-            if (tagName == "p" || tagName == "div" || tagName == "head") {
-                // Block element - flush current block and start new one
-                flushBlock();
-                currentBlock.kind = Block::Paragraph;
-                if (tagName == "head") {
-                    currentBlock.kind = Block::Heading;
-                }
-                pos = tagEnd + 1;
-                // Skip to closing tag for non-self-closing block elements
-                if (!selfClosing) {
-                    std::string closingTagStr = "</" + tagName;
-                    size_t ctag = xhtml.find(closingTagStr, pos);
-                    if (ctag != std::string::npos) {
-                        size_t ctend = xhtml.find('>', ctag);
-                        if (ctend != std::string::npos) {
-                            // Parse content between tags
-                            std::string content = xhtml.substr(pos, ctag - pos);
-                            // Recursively parse the content
-                            auto subBlocks = ParseXhtml(content);
-                            for (auto& sb : subBlocks) {
-                                // Append sub-block content to current block
-                                for (auto& sr : sb.runs) {
-                                    currentBlock.runs.push_back(sr);
-                                }
-                            }
-                            if (!subBlocks.empty() && !subBlocks.back().runs.empty()) {
-                                currentBlock.kind = subBlocks.back().kind;
-                            }
-                            pos = ctend + 1;
-                        } else {
-                            pos = xhtml.size();
-                        }
-                    } else {
-                        pos = xhtml.size();
-                    }
-                } else {
-                    pos = tagEnd + 1;
-                }
-            }
-            else if (tagName == "br" || tagName == "lb") {
-                // Line break
-                flushBlock();
-                Block brBlock;
-                brBlock.kind = Block::LineBreak;
-                blocks.push_back(brBlock);
-                pos = tagEnd + 1;
-            }
-            else if (tagName == "w") {
-                // Word element - may contain Strong's numbers and morph tags
-                // Check for strong:, savlm, lemma=, morph= attributes
-                std::string strongs, morph;
-                
-                // Check for standalone strong: attribute (not inside another attribute's value)
-                {
-                    size_t spos = 0;
-                    while ((spos = tagContent.find("strong:", spos)) != std::string::npos) {
-                        // Ensure "strong:" is a standalone attribute, not inside a quoted value
-                        // It must be preceded by whitespace or be at position 0
-                        bool standalone = (spos == 0 || std::isspace(static_cast<unsigned char>(tagContent[spos - 1])));
-                        if (standalone) {
-                            size_t valStart = spos + 7;
-                            size_t valEnd = tagContent.find_first_of(" \t\n\r/>", valStart);
-                            if (valEnd == std::string::npos) valEnd = tagContent.size();
-                            std::string val = tagContent.substr(valStart, valEnd - valStart);
-                            if (!val.empty() && val[0] != ':') {
-                                strongs = val;
-                            }
-                            break; // Take the first standalone strong: attribute
-                        }
-                        spos++;
-                    }
-                }
-                
-                // Check savlm attribute (e.g., savlm="strong:H07225")
-                if (strongs.empty()) {
-                    size_t spos = tagContent.find("savlm=");
-                    if (spos != std::string::npos) {
-                        spos += 6;
-                        if (spos < tagContent.size() && (tagContent[spos] == '"' || tagContent[spos] == '\'')) {
-                            char quote = tagContent[spos];
-                            spos++;
-                            size_t valEnd = tagContent.find(quote, spos);
-                            if (valEnd != std::string::npos) {
-                                std::string val = tagContent.substr(spos, valEnd - spos);
-                                // Extract strong:X from "strong:H07225"
-                                size_t sp = val.find("strong:");
-                                if (sp != std::string::npos) {
-                                    size_t vs = sp + 7;
-                                    size_t ve = val.find_first_of(" \"'", vs);
-                                    if (ve == std::string::npos) ve = val.size();
-                                    strongs = val.substr(vs, ve - vs);
-                                } else {
-                                    strongs = val;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Check lemma attribute (e.g., lemma="strong:H07225")
-                if (strongs.empty()) {
-                    size_t spos = tagContent.find("lemma=");
-                    if (spos != std::string::npos) {
-                        spos += 6;
-                        if (spos < tagContent.size() && (tagContent[spos] == '"' || tagContent[spos] == '\'')) {
-                            char quote = tagContent[spos];
-                            spos++;
-                            size_t valEnd = tagContent.find(quote, spos);
-                            if (valEnd != std::string::npos) {
-                                std::string val = tagContent.substr(spos, valEnd - spos);
-                                size_t sp = val.find("strong:");
-                                if (sp != std::string::npos) {
-                                    size_t vs = sp + 7;
-                                    size_t ve = val.find_first_of(" \"'", vs);
-                                    if (ve == std::string::npos) ve = val.size();
-                                    strongs = val.substr(vs, ve - vs);
-                                } else {
-                                    strongs = val;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Parse morph attribute (like morph="robinson:V-PAI-3S")
-                {
-                    size_t spos = tagContent.find("morph=");
-                    if (spos != std::string::npos) {
-                        spos += 6;
-                        if (spos < tagContent.size() && (tagContent[spos] == '"' || tagContent[spos] == '\'')) {
-                            char quote = tagContent[spos];
-                            spos++;
-                            size_t valEnd = tagContent.find(quote, spos);
-                            if (valEnd != std::string::npos) {
-                                morph = tagContent.substr(spos, valEnd - spos);
-                            }
-                        }
-                    }
-                }
-                
-                unsigned style = parseInlineStyle(tagContent);
-                
-                // Parse href for cross-reference links
-                size_t hrefPos = tagContent.find("href=");
-                if (hrefPos != std::string::npos) {
-                    hrefPos += 6;
-                    if (hrefPos < xhtml.size() && xhtml[hrefPos] == '"') {
-                        hrefPos++;
-                        size_t hrefEnd = xhtml.find('"', hrefPos);
-                        if (hrefEnd != std::string::npos) {
-                            std::string href = xhtml.substr(hrefPos, hrefEnd - hrefPos);
-                            // Determine link kind from href
-                            if (href.find("Strong") != std::string::npos || 
-                                href.find("strong") != std::string::npos) {
-                                currentLink.kind = LinkKind::Strongs;
-                                currentLink.target = href;
-                            } else if (href.find("CrossReference") != std::string::npos) {
-                                currentLink.kind = LinkKind::CrossRef;
-                                currentLink.target = href;
-                            } else {
-                                currentLink.kind = LinkKind::Url;
-                                currentLink.target = href;
-                            }
-                            pos = hrefEnd + 1; // Skip past the attribute
-                        }
-                    }
-                }
-                
-                // Set strongs/morph link if present
-                if (!strongs.empty()) {
-                    currentLink.kind = LinkKind::Strongs;
-                    currentLink.target = strongs;
-                } else if (!morph.empty()) {
-                    currentLink.kind = LinkKind::Morph;
-                    currentLink.target = morph;
-                }
-                
-                currentStyle = style;
-                pos = tagEnd + 1;
-                // Get text content
-                if (!selfClosing) {
-                    std::string closedTag = "/w>";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 3;
-                    } else {
-                        currentText = "";
-                        pos = xhtml.size();
-                    }
-                } else {
-                    currentText = "";
-                }
-            }
-            else if (tagName == "divineName") {
-                currentStyle |= kDivineName;
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/divineName>";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 11;
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else if (tagName == "transChange") {
-                currentStyle |= kTransChange;
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/transChange>";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 13;
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else if (tagName == "note") {
-                // Footnote - extract note id from n attribute
-                size_t nPos = tagContent.find("n=");
-                if (nPos != std::string::npos) {
-                    nPos += 2;
-                    char quote = 0;
-                    if (nPos < tagContent.size() && (tagContent[nPos] == '"' || tagContent[nPos] == '\'')) {
-                        quote = tagContent[nPos];
-                        nPos++;
-                        size_t valEnd = tagContent.find(quote, nPos);
-                        if (valEnd != std::string::npos) {
-                            std::string noteId = tagContent.substr(nPos, valEnd - nPos);
-                            currentLink.kind = LinkKind::Footnote;
-                            currentLink.target = noteId;
-                        }
-                    }
-                }
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/note>";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 5;
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else if (tagName == "ref") {
-                // Cross-reference link
-                size_t targetPos = tagContent.find("target=");
-                if (targetPos != std::string::npos) {
-                    targetPos += 7;
-                    if (targetPos < tagContent.size() && (tagContent[targetPos] == '"' || tagContent[targetPos] == '\'')) {
-                        char quote = tagContent[targetPos];
-                        targetPos++;
-                        size_t valEnd = tagContent.find(quote, targetPos);
-                        if (valEnd != std::string::npos) {
-                            std::string target = tagContent.substr(targetPos, valEnd - targetPos);
-                            currentLink.kind = LinkKind::CrossRef;
-                            currentLink.target = target;
-                        }
-                    }
-                }
-                pos = tagEnd + 1;
-            }
-            else if (tagName == "milestone") {
-                // Milestone (paragraph marker, etc.) - treat as line break
-                // Check type attribute
-                std::string typeVal;
-                size_t tp = tagContent.find("type=");
-                if (tp != std::string::npos) {
-                    tp += 5;
-                    if (tp < tagContent.size() && (tagContent[tp] == '"' || tagContent[tp] == '\'')) {
-                        char q = tagContent[tp];
-                        tp++;
-                        size_t ve = tagContent.find(q, tp);
-                        if (ve != std::string::npos) typeVal = tagContent.substr(tp, ve - tp);
-                    }
-                }
-                if (typeVal == "x-p" || typeVal == "para") {
-                    flushBlock();
-                    Block mb;
-                    mb.kind = Block::Paragraph; // Start new paragraph
-                    blocks.push_back(std::move(mb));
-                }
-                pos = tagEnd + 1;
-            }
-            else if (tagName == "q") {
-                // Quoted speech - just treat as inline, no special handling needed
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/q>";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        // Parse the inner content
-                        auto subBlocks = ParseXhtml(xhtml.substr(pos, ctag - pos));
-                        for (auto& sb : subBlocks) {
-                            for (auto& sr : sb.runs) {
-                                currentBlock.runs.push_back(sr);
-                            }
-                        }
-                        pos = ctag + 3;
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else if (tagName == "sup") {
-                currentStyle |= kSuperscript;
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/sup>";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 5;
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else if (tagName == "em" || tagName == "italic") {
-                currentStyle |= kItalic;
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/" + tagName + ">";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 3 + tagName.size();
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else if (tagName == "b" || tagName == "bold") {
-                currentStyle |= kBold;
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/" + tagName + ">";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 3 + tagName.size();
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else if (tagName == "small") {
-                currentStyle |= kSmall;
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/small>";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 7;
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else if (tagName == "xref" || tagName == "crossReference") {
-                // Cross-reference element
-                size_t targetPos = tagContent.find("target=");
-                if (targetPos != std::string::npos) {
-                    targetPos += 7;
-                    if (targetPos < tagContent.size() && (tagContent[targetPos] == '"' || tagContent[targetPos] == '\'')) {
-                        char quote = tagContent[targetPos];
-                        targetPos++;
-                        size_t valEnd = tagContent.find(quote, targetPos);
-                        if (valEnd != std::string::npos) {
-                            std::string target = tagContent.substr(targetPos, valEnd - targetPos);
-                            currentLink.kind = LinkKind::CrossRef;
-                            currentLink.target = target;
-                        }
-                    }
-                }
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/" + tagName + ">";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 3 + tagName.size();
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else if (tagName == "chapter") {
-                // Chapter end marker - skip
-                pos = tagEnd + 1;
-            }
-            else if (tagName == "entryFree" || tagName == "def" || tagName == "orth" ||
-                     tagName == "pron" || tagName == "lex" || tagName == "wg" ||
-                     tagName == "lb" || tagName == "entry" || tagName == "headword" ||
-                     tagName == "sense" || tagName == "def" || tagName == "see" ||
-                     tagName == "seealso") {
-                // Dictionary content tags
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/" + tagName + ">";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        // Parse inner content
-                        auto subBlocks = ParseXhtml(xhtml.substr(pos, ctag - pos));
-                        for (auto& sb : subBlocks) {
-                            for (auto& sr : sb.runs) {
-                                currentBlock.runs.push_back(sr);
-                            }
-                        }
-                        pos = ctag + 3 + tagName.size();
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-            else {
-                // Unknown tag - keep its text content, drop the tag
-                pos = tagEnd + 1;
-                if (!selfClosing) {
-                    std::string closedTag = "/" + tagName + ">";
-                    size_t ctag = xhtml.find(closedTag, pos);
-                    if (ctag != std::string::npos) {
-                        currentText = xhtml.substr(pos, ctag - pos);
-                        pos = ctag + 3 + tagName.size();
-                    } else {
-                        pos = xhtml.size();
-                    }
-                }
-            }
-        } else {
-            currentText += xhtml[pos];
-            pos++;
-        }
-    }
-    
-    // Flush final text
-    flushRun();
-    flushBlock();
-    
-    return blocks;
+
+std::string PlainText(const std::vector<Block>& blocks)
+{
+	std::string out;
+	for (size_t i = 0; i < blocks.size(); i++) {
+		if (i > 0)
+			out += '\n';
+		for (const Run& r : blocks[i].runs)
+			out += r.text;
+	}
+	return out;
 }
 
-std::string PlainText(const std::vector<Block>& blocks) {
-    std::string result;
-    bool first = true;
-    for (const auto& block : blocks) {
-        if (!first) result += '\n';
-        first = false;
-        if (block.kind == Block::LineBreak) {
-            result += '\n';
-        } else {
-            for (const auto& run : block.runs) {
-                result += run.text;
-            }
-        }
-    }
-    return result;
-}
-
-}
+}	// namespace sheath

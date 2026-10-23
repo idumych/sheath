@@ -1,455 +1,328 @@
 #include "Sword.h"
-#include <sword/swmgr.h>
-#include <sword/swmodule.h>
-#include <sword/versekey.h>
-#include <sword/swkey.h>
-#include <sword/swbuf.h>
-#include <sword/swconfig.h>
-#include <sword/strkey.h>
-#include <sword/listkey.h>
-#include <sword/swld.h>
-#include <sword/rawld.h>
-#include <sword/rawld4.h>
-#include <sword/zld.h>
-#include <sword/swtext.h>
-#include <sword/rawtext.h>
-#include <sword/ztext.h>
-#include <sword/ztext4.h>
-#include <sword/swgenbook.h>
-#include <sword/rawgenbook.h>
-#include <sword/versificationmgr.h>
+
+#include <swmgr.h>
+#include <swmodule.h>
+#include <markupfiltmgr.h>
+#include <versekey.h>
+#include <versificationmgr.h>
+
 #include <algorithm>
-#include <cstring>
+#include <cctype>
 #include <cstdlib>
-#include <sstream>
-#include <regex>
-#include <set>
+#include <cstring>
+#include <strings.h>
 
 namespace sheath {
 
-// ---- internal helpers ----
+namespace {
 
-static std::string mapModuleType(const std::string& swordType) {
-    if (swordType.find("Bible") != std::string::npos) return "Bible";
-    if (swordType.find("Commentary") != std::string::npos) return "Commentary";
-    if (swordType.find("Dictionary") != std::string::npos ||
-        swordType.find("Lexicon") != std::string::npos) return "Dictionary";
-    if (swordType.find("Book") != std::string::npos ||
-        swordType.find("Generic") != std::string::npos ||
-        swordType.find("Daily") != std::string::npos) return "Book";
-    return swordType;
+std::string ConfigEntry(sword::SWModule* mod, const char* key)
+{
+	const char* v = mod->getConfigEntry(key);
+	return v ? v : "";
 }
 
-static bool hasOption(const sword::ConfigEntMap& cfg, const std::string& opt) {
-    return cfg.find(sword::SWBuf(opt.c_str())) != cfg.end();
+std::string TypeOf(sword::SWModule* mod)
+{
+	std::string t = mod->getType();
+	if (t.find("Bibl") != std::string::npos) return "Bible";
+	if (t.find("Commentar") != std::string::npos) return "Commentary";
+	if (t.find("Lexicon") != std::string::npos || t.find("Dictionar") != std::string::npos)
+		return "Dictionary";
+	return "Book";
 }
 
-// Map a Strong's key like "G25"/"H430" to a numeric key for the dictionary module
-static std::string strongsToKey(const std::string& key) {
-    if (key.empty()) return key;
-    std::string num = key;
-    if (!num.empty() && (num[0] == 'G' || num[0] == 'H')) {
-        num = num.substr(1);
-    }
-    return num;
+bool HasFilter(sword::SWModule* mod, const char* name)
+{
+	const sword::ConfigEntMap& cfg = mod->getConfig();
+	for (auto it = cfg.lower_bound("GlobalOptionFilter");
+			it != cfg.upper_bound("GlobalOptionFilter"); ++it) {
+		if (it->second == name)
+			return true;
+	}
+	return false;
 }
 
-// Check if a key exists in the module
-static bool keyExists(sword::SWModule* mod, const std::string& keyText) {
-    if (!mod) return false;
-    auto* k = mod->createKey();
-    k->setText(keyText.c_str());
-    mod->setKey(k);
-    const char* txt = k->getText();
-    bool found = (txt != nullptr && txt[0] != 0);
-    delete k;
-    return found;
+bool HasFeature(sword::SWModule* mod, const char* name)
+{
+	const sword::ConfigEntMap& cfg = mod->getConfig();
+	for (auto it = cfg.lower_bound("Feature"); it != cfg.upper_bound("Feature"); ++it) {
+		if (it->second == name)
+			return true;
+	}
+	return false;
 }
+
+bool StartsWithNoCase(const std::string& s, const std::string& prefix)
+{
+	if (s.size() < prefix.size())
+		return false;
+	for (size_t i = 0; i < prefix.size(); i++) {
+		if (std::toupper((unsigned char)s[i]) != std::toupper((unsigned char)prefix[i]))
+			return false;
+	}
+	return true;
+}
+
+}	// namespace
+
 
 struct SwordLibrary::Impl {
-    sword::SWMgr* mgr = nullptr;
-    mutable std::set<std::string> bibleModules;
+	std::string path;
+	sword::SWMgr* mgr = nullptr;
 
-    Impl(const std::string& swordPath) {
-        const char* pathEnv = swordPath.empty() ? nullptr : swordPath.c_str();
-        mgr = new sword::SWMgr(pathEnv, true, nullptr, false);
-    }
+	explicit Impl(const std::string& p) : path(p) { Load(); }
+	~Impl() { delete mgr; }
 
-    ~Impl() {
-        delete mgr;
-    }
+	void Load()
+	{
+		delete mgr;
+		sword::MarkupFilterMgr* filters = new sword::MarkupFilterMgr(sword::FMT_XHTML);
+		if (path.empty())
+			mgr = new sword::SWMgr(filters);
+		else
+			mgr = new sword::SWMgr(path.c_str(), true, filters);
+	}
 
-    std::vector<ModuleInfo> getModules() const {
-        std::vector<ModuleInfo> result;
-        for (auto& [name, mod]: mgr->getModules()) {
-            ModuleInfo info;
-            info.name = name;
-            info.description = mod->getDescription();
-            info.type = mapModuleType(mod->getType());
-            info.language = mod->getLanguage() ? mod->getLanguage() : "";
-            const auto& cfg = mod->getConfig();
-            auto itV = cfg.find("Version");
-            if (itV != cfg.end()) info.version = itV->second;
-            auto itVF = cfg.find("Versification");
-            if (itVF != cfg.end()) info.versification = itVF->second;
-            info.versification = info.versification.empty() ? "KJV" : info.versification;
+	sword::SWModule* Module(const std::string& name) const
+	{
+		return mgr->getModule(name.c_str());
+	}
 
-            // Bible modules have a Versification config entry
-            if (itVF != cfg.end() && info.type != "Bible" && info.type != "Commentary") {
-                info.type = "Bible";
-            }
+	void SetOptions(const DisplayOptions& o)
+	{
+		mgr->setGlobalOption("Strong's Numbers", o.strongs ? "On" : "Off");
+		mgr->setGlobalOption("Morphological Tags", o.morph ? "On" : "Off");
+		mgr->setGlobalOption("Footnotes", o.footnotes ? "On" : "Off");
+		mgr->setGlobalOption("Cross-references", o.crossRefs ? "On" : "Off");
+		mgr->setGlobalOption("Headings", o.headings ? "On" : "Off");
+		mgr->setGlobalOption("Words of Christ in Red", o.redLetter ? "On" : "Off");
+	}
 
-            // Detect features from config and global options
-            auto itS = cfg.find("StrongsNumbers");
-            info.strongs = (itS != cfg.end());
-            auto itM = cfg.find("Morph");
-            info.morph = (itM != cfg.end());
-            auto itF = cfg.find("Footnotes");
-            info.footnotes = (itF != cfg.end());
-            auto itH = cfg.find("Headings");
-            info.headings = (itH != cfg.end());
-            auto itR = cfg.find("RedLetter");
-            info.redLetter = (itR != cfg.end());
+	const sword::VersificationMgr::System* System(sword::SWModule* mod) const
+	{
+		std::string v11n = ConfigEntry(mod, "Versification");
+		if (v11n.empty())
+			v11n = "KJV";
+		return sword::VersificationMgr::getSystemVersificationMgr()
+			->getVersificationSystem(v11n.c_str());
+	}
 
-            // Also check for OSIS-based features from GlobalOptionFilters
-            for (auto& [k, v]: cfg) {
-                if (k == "GlobalOptionFilter") {
-                    if (v == "OSISStrongs" || v == "OSISLemma") info.strongs = true;
-                    if (v == "OSISMorph" || v == "OSISMorphSegmentation") info.morph = true;
-                    if (v == "OSISFootnotes") info.footnotes = true;
-                    if (v == "OSISHeadings") info.headings = true;
-                    if (v == "OSISRedLetterWords") info.redLetter = true;
-                }
-            }
-
-            // Track bible modules by name
-            if (info.type == "Bible") {
-                bibleModules.insert(std::string(name));
-            }
-
-            result.push_back(info);
-        }
-        std::sort(result.begin(), result.end(),
-                  [](const ModuleInfo& a, const ModuleInfo& b) { return a.name < b.name; });
-        return result;
-    }
-
-    bool findModule(const std::string& name, ModuleInfo* out) const {
-        auto mods = getModules();
-        for (auto& m : mods) {
-            if (m.name == name) {
-                if (out) *out = m;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // Get the versification system for a module
-    const sword::VersificationMgr::System* getVersificationForModule(const std::string& moduleName) const {
-        auto* mod = mgr->getModule(moduleName.c_str());
-        if (!mod) return nullptr;
-        std::string v11n = mod->getConfigEntry("Versification");
-        if (v11n.empty()) v11n = "KJV";
-        auto* sys = sword::VersificationMgr::getSystemVersificationMgr()->getVersificationSystem(v11n.c_str());
-        return sys;
-    }
-
-    // Find the book OSIS name by matching either OSIS name or preferred abbreviation
-    std::string findBookOsisName(const std::string& sysName, const std::string& bookOsis) const {
-        auto* sys = getVersificationForModule(sysName);
-        if (!sys) return bookOsis; // fallback to caller's input
-        for (int i = 0; i < sys->getBookCount(); i++) {
-            const auto* book = sys->getBook(i);
-            if (!book) continue;
-            if (strcmp(book->getOSISName(), bookOsis.c_str()) == 0) return bookOsis;
-            if (strcmp(book->getPreferredAbbreviation(), bookOsis.c_str()) == 0) return bookOsis;
-        }
-        return ""; // not found
-    }
-
-    std::vector<BookInfo> getBooks(const std::string& moduleName) const {
-        auto* sys = getVersificationForModule(moduleName);
-        if (!sys) return {};
-
-        int bookCount = sys->getBookCount();
-        std::vector<BookInfo> books;
-        books.reserve(bookCount);
-
-        for (int i = 0; i < bookCount; i++) {
-            const auto* book = sys->getBook(i);
-            if (!book) continue;
-            BookInfo bi;
-            bi.osis = book->getOSISName();
-            bi.prefAbbrev = book->getPreferredAbbreviation();
-            bi.name = book->getLongName();
-            bi.chapters = book->getChapterMax();
-            // Determine testament: index < BMAX[0] => OT (1), else NT (2)
-            const int* bmax = sys->getBMAX();
-            bi.testament = (i < bmax[0]) ? 1 : 2;
-            books.push_back(bi);
-        }
-        return books;
-    }
-
-    int verseCount(const std::string& moduleName, const std::string& bookOsis, int chapter) const {
-        auto* mod = mgr->getModule(moduleName.c_str());
-        if (!mod) return 0;
-
-        auto* sys = getVersificationForModule(moduleName);
-        if (!sys) return 0;
-
-        // Find the book by iterating (getBookNumberByOSISName is unreliable)
-        const sword::VersificationMgr::Book *book = nullptr;
-        for (int i = 0; i < sys->getBookCount(); i++) {
-            const sword::VersificationMgr::Book *b = sys->getBook(i);
-            if (!b) continue;
-            if (strcmp(b->getOSISName(), bookOsis.c_str()) == 0) {
-                book = b;
-                break;
-            }
-        }
-        if (!book) return 0;
-
-        int chapterMax = book->getChapterMax();
-        if (chapter > chapterMax) return 0;
-
-        // Use the versification system's verse max for this chapter
-        int maxVerses = book->getVerseMax(chapter);
-        if (maxVerses < 1) maxVerses = 1;
-
-        sword::VerseKey vk;
-        vk.setVersificationSystem(sys->getName());
-        vk.setBookName(book->getOSISName());
-        vk.setChapter(chapter);
-
-        // Count verses that have actual content
-        int count = 0;
-        for (int v = 1; v <= maxVerses; v++) {
-            vk.setVerse(v);
-            mod->setKey(&vk);
-            mod->setPosition(0);
-            sword::SWBuf rendered = mod->renderText();
-            if (rendered.c_str()[0] != '\0') {
-                count++;
-            }
-        }
-        return count;
-    }
+	// The module's own verse key (its versification), positioned at book/chapter/1.
+	// nullptr if the module has no verse key or doesn't know the book or chapter.
+	sword::VerseKey* ChapterKey(sword::SWModule* mod, const std::string& book, int chapter) const
+	{
+		sword::VerseKey* vk = dynamic_cast<sword::VerseKey*>(mod->createKey());
+		if (vk == nullptr)
+			return nullptr;
+		vk->setIntros(false);
+		vk->setText((book + "." + std::to_string(chapter) + ".1").c_str());
+		if (vk->popError() || book != vk->getOSISBookName() || vk->getChapter() != chapter
+				|| chapter < 1 || chapter > vk->getChapterMax()) {
+			delete vk;
+			return nullptr;
+		}
+		vk->setVerse(1);
+		return vk;
+	}
 };
 
-// ---- public API ----
 
 SwordLibrary::SwordLibrary(const std::string& swordPath) : d(new Impl(swordPath)) {}
 SwordLibrary::~SwordLibrary() { delete d; }
 
-void SwordLibrary::Reload() {
-    delete d;
-    d = new Impl("");
+void SwordLibrary::Reload() { d->Load(); }
+
+
+std::vector<ModuleInfo> SwordLibrary::Modules() const
+{
+	std::vector<ModuleInfo> result;
+	for (auto& entry : d->mgr->getModules()) {
+		sword::SWModule* mod = entry.second;
+		ModuleInfo info;
+		info.name = mod->getName();
+		info.description = mod->getDescription() ? mod->getDescription() : "";
+		info.type = TypeOf(mod);
+		info.language = mod->getLanguage() ? mod->getLanguage() : "";
+		info.version = ConfigEntry(mod, "Version");
+		info.versification = ConfigEntry(mod, "Versification");
+		if (info.versification.empty())
+			info.versification = "KJV";
+		info.strongs = HasFilter(mod, "OSISStrongs") || HasFilter(mod, "GBFStrongs")
+			|| HasFilter(mod, "ThMLStrongs") || HasFeature(mod, "StrongsNumbers");
+		info.morph = HasFilter(mod, "OSISMorph") || HasFilter(mod, "GBFMorph")
+			|| HasFilter(mod, "ThMLMorph");
+		info.footnotes = HasFilter(mod, "OSISFootnotes") || HasFilter(mod, "GBFFootnotes")
+			|| HasFilter(mod, "ThMLFootnotes");
+		info.headings = HasFilter(mod, "OSISHeadings") || HasFilter(mod, "ThMLHeadings");
+		info.redLetter = HasFilter(mod, "OSISRedLetterWords") || HasFilter(mod, "GBFRedLetterWords");
+		result.push_back(info);
+	}
+	std::sort(result.begin(), result.end(),
+		[](const ModuleInfo& a, const ModuleInfo& b) { return a.name < b.name; });
+	return result;
 }
 
-std::vector<ModuleInfo> SwordLibrary::Modules() const {
-    return d->getModules();
+
+bool SwordLibrary::Find(const std::string& module, ModuleInfo* out) const
+{
+	for (const ModuleInfo& m : Modules()) {
+		if (m.name == module) {
+			if (out)
+				*out = m;
+			return true;
+		}
+	}
+	return false;
 }
 
-bool SwordLibrary::Find(const std::string& module, ModuleInfo* out) const {
-    return d->findModule(module, out);
+
+std::vector<BookInfo> SwordLibrary::Books(const std::string& module) const
+{
+	std::vector<BookInfo> books;
+	sword::SWModule* mod = d->Module(module);
+	const sword::VersificationMgr::System* sys = mod ? d->System(mod) : nullptr;
+	if (sys == nullptr)
+		return books;
+	int otBooks = sys->getBMAX()[0];
+	for (int i = 0; i < sys->getBookCount(); i++) {
+		const sword::VersificationMgr::Book* b = sys->getBook(i);
+		BookInfo info;
+		info.osis = b->getOSISName();
+		info.prefAbbrev = b->getPreferredAbbreviation();
+		info.name = b->getLongName();
+		info.chapters = b->getChapterMax();
+		info.testament = i < otBooks ? 1 : 2;
+		books.push_back(info);
+	}
+	return books;
 }
 
-std::vector<BookInfo> SwordLibrary::Books(const std::string& moduleName) const {
-    return d->getBooks(moduleName);
+
+int SwordLibrary::VerseCount(const std::string& module, const std::string& book, int chapter) const
+{
+	sword::SWModule* mod = d->Module(module);
+	if (mod == nullptr)
+		return 0;
+	sword::VerseKey* vk = d->ChapterKey(mod, book, chapter);
+	if (vk == nullptr)
+		return 0;
+	int n = vk->getVerseMax();
+	delete vk;
+	return n;
 }
 
-int SwordLibrary::VerseCount(const std::string& module, const std::string& bookOsis, int chapter) const {
-    return d->verseCount(module, bookOsis, chapter);
+
+std::vector<VerseText> SwordLibrary::Chapter(const std::string& module, const std::string& book,
+	int chapter, const DisplayOptions& opts)
+{
+	std::vector<VerseText> result;
+	sword::SWModule* mod = d->Module(module);
+	if (mod == nullptr)
+		return result;
+	sword::VerseKey* vk = d->ChapterKey(mod, book, chapter);
+	if (vk == nullptr)
+		return result;
+	d->SetOptions(opts);
+
+	int max = vk->getVerseMax();
+	for (int v = 1; v <= max; v++) {
+		vk->setVerse(v);
+		mod->setKey(vk);
+		std::string xhtml = mod->renderText().c_str();
+		if (xhtml.find_first_not_of(" \t\r\n") == std::string::npos)
+			continue;
+
+		VerseText text;
+		text.verse = v;
+		text.xhtml = xhtml;
+		if (opts.footnotes) {
+			// Footnote bodies aren't in the rendered text, only a marker linking to the id.
+			sword::AttributeList& notes = mod->getEntryAttributes()["Footnote"];
+			for (auto& note : notes) {
+				auto body = note.second.find("body");
+				if (body != note.second.end())
+					text.notes[note.first.c_str()] = mod->renderText(body->second.c_str()).c_str();
+			}
+		}
+		result.push_back(text);
+	}
+	delete vk;
+	return result;
 }
 
-std::vector<VerseText> SwordLibrary::Chapter(const std::string& moduleName,
-                                               const std::string& bookOsis,
-                                               int chapter,
-                                               const DisplayOptions& opts) {
-    auto* mod = d->mgr->getModule(moduleName.c_str());
-    if (!mod) return {};
 
-    // Set global options
-    d->mgr->setGlobalOption("Strong's Numbers", opts.strongs ? "On" : "Off");
-    d->mgr->setGlobalOption("Morphological Tags", opts.morph ? "On" : "Off");
-    d->mgr->setGlobalOption("Footnotes", opts.footnotes ? "On" : "Off");
-    d->mgr->setGlobalOption("Cross-references", opts.crossRefs ? "On" : "Off");
-    d->mgr->setGlobalOption("Headings", opts.headings ? "On" : "Off");
-    d->mgr->setGlobalOption("Words of Christ in Red", opts.redLetter ? "On" : "Off");
+std::string SwordLibrary::Entry(const std::string& module, const std::string& key,
+	const DisplayOptions& opts)
+{
+	sword::SWModule* mod = d->Module(module);
+	if (mod == nullptr || key.empty())
+		return "";
+	d->SetOptions(opts);
 
-    // Get the versification system for this module
-    auto* sys = d->getVersificationForModule(moduleName);
-    if (!sys) return {};
+	// Strong's dictionaries key their entries by number ("00025"); SWORD pads it itself.
+	bool strongs = HasFeature(mod, "GreekDef") || HasFeature(mod, "HebrewDef");
+	std::string want = key;
+	if (strongs && (key[0] == 'G' || key[0] == 'H' || key[0] == 'g' || key[0] == 'h'))
+		want = key.substr(1);
 
-    // Find the book by iterating (getBookNumberByOSISName is unreliable)
-    const sword::VersificationMgr::Book *book = nullptr;
-    for (int i = 0; i < sys->getBookCount(); i++) {
-        const sword::VersificationMgr::Book *b = sys->getBook(i);
-        if (!b) continue;
-        if (strcmp(b->getOSISName(), bookOsis.c_str()) == 0) {
-            book = b;
-            break;
-        }
-    }
-    if (!book) return {};
-
-    int chapterMax = book->getChapterMax();
-    if (chapter > chapterMax) return {};
-
-    // Use the versification system's verse max for this chapter
-    int maxVerses = book->getVerseMax(chapter);
-    if (maxVerses < 1) maxVerses = 1;
-
-    // Create a VerseKey using the module's versification system
-    sword::VerseKey vk;
-    vk.setVersificationSystem(sys->getName());
-    vk.setBookName(book->getOSISName());
-    vk.setChapter(chapter);
-
-    std::vector<VerseText> result;
-
-    for (int v = 1; v <= maxVerses; v++) {
-        vk.setVerse(v);
-        mod->setKey(&vk);
-        mod->setPosition(0);
-
-        sword::SWBuf rendered = mod->renderText();
-        if (rendered.c_str()[0] == '\0') {
-            continue;
-        }
-
-        VerseText vt;
-        vt.verse = vk.getVerse();
-        vt.xhtml = std::string(rendered.c_str());
-
-        if (opts.footnotes) {
-            std::string xhtml(rendered.c_str());
-            std::regex noteRegex("<note n=\"(\\d+)\">", std::regex::ECMAScript | std::regex::icase);
-            for (std::sregex_iterator it(xhtml.begin(), xhtml.end(), noteRegex), end_it{}; it != end_it; ++it) {
-                std::smatch match = *it;
-                size_t noteStart = match.position();
-                size_t noteEnd = xhtml.find("</note>", noteStart);
-                if (noteEnd != std::string::npos) {
-                    vt.notes[match[1].str()] = xhtml.substr(noteStart, noteEnd - noteStart);
-                }
-            }
-            std::regex noteRemove("<note[^>]*>.*?</note>", std::regex::ECMAScript | std::regex::icase);
-            xhtml = std::regex_replace(xhtml, noteRemove, "");
-            vt.xhtml = xhtml;
-        }
-
-        result.push_back(vt);
-    }
-
-    return result;
+	mod->setKey(want.c_str());
+	if (mod->popError())
+		return "";
+	// A lexicon jumps to the nearest key; only an exact landing is a hit. (Lexicon drivers
+	// only know the key they landed on after reading the entry.)
+	std::string body = mod->renderText().c_str();
+	std::string landed = mod->getKeyText();
+	bool exact = strongs ? std::atol(landed.c_str()) == std::atol(want.c_str())
+			&& want.find_first_not_of("0123456789") == std::string::npos
+		: landed.size() == want.size() && StartsWithNoCase(landed, want);
+	return exact ? body : "";
 }
 
-std::string SwordLibrary::Entry(const std::string& moduleName,
-                                  const std::string& key,
-                                  const DisplayOptions&) {
-    auto* mod = d->mgr->getModule(moduleName.c_str());
-    if (!mod) return "";
 
-    // For Strong's dictionary modules, map "G25"/"H430" to numeric key "25"/"430"
-    std::string actualKey = key;
-    if (!key.empty() && (key[0] == 'G' || key[0] == 'H')) {
-        actualKey = strongsToKey(key);
-    }
+std::vector<std::string> SwordLibrary::Keys(const std::string& module, const std::string& prefix,
+	int limit) const
+{
+	std::vector<std::string> result;
+	sword::SWModule* mod = d->Module(module);
+	if (mod == nullptr || limit <= 0)
+		return result;
 
-    sword::StrKey sk(actualKey.c_str());
-    mod->setKey(&sk);
-    sword::SWBuf rendered = mod->renderText();
-    std::string result = std::string(rendered.c_str());
-    if (!result.empty()) {
-        // For dictionary modules (rawtext-based), check that the entry
-        // contains meaningful content. Auto-generated placeholders for
-        // non-existent keys contain "@@@" patterns and lack real dictionary data.
-        if (result.find("@@@@") != std::string::npos && result.find("=====") == std::string::npos) {
-            return "";
-        }
-        return result;
-    }
+	if (TypeOf(mod) == "Bible" || TypeOf(mod) == "Commentary") {
+		for (const BookInfo& b : Books(module)) {
+			if ((int)result.size() >= limit)
+				break;
+			if (StartsWithNoCase(b.osis, prefix) || StartsWithNoCase(b.name, prefix))
+				result.push_back(b.osis);
+		}
+		return result;
+	}
 
-    // Try VerseKey fallback only for Bible/commentary modules (keys that look like refs)
-    // Check if this is a Bible-type module
-    std::string modType = mapModuleType(mod->getType());
-    if (modType == "Bible" || modType == "Commentary") {
-        // Only try VerseKey if the key looks like a reference
-        bool looksLikeRef = key.find(':') != std::string::npos ||
-                            key.find('.') != std::string::npos;
-        if (looksLikeRef) {
-            sword::VerseKey vk(actualKey.c_str());
-            mod->setKey(&vk);
-            const char* txt = mod->getKey()->getText();
-            if (txt != nullptr && txt[0] != 0) {
-                sword::SWBuf rendered = mod->renderText();
-                if (rendered.c_str()[0] != '\0') {
-                    return std::string(rendered.c_str());
-                }
-            }
-        }
-    }
-
-    return "";
+	// Lexicons and books: position near the prefix, walk forward while keys match. The driver
+	// may land before the prefix (Strong's padding turns "0002" into "00002"), so skip ahead
+	// a bounded number of keys first.
+	mod->setKey(prefix.c_str());
+	mod->popError();
+	int skip = 0;
+	while ((int)result.size() < limit) {
+		mod->getRawEntry();
+		std::string k = mod->getKeyText();
+		if (!StartsWithNoCase(k, prefix)) {
+			bool before = strcasecmp(k.c_str(), prefix.c_str()) < 0;
+			if (!result.empty() || !before || ++skip > 5000)
+				break;
+			mod->increment();
+			if (mod->popError())
+				break;
+			continue;
+		}
+		if (result.empty() || result.back() != k)
+			result.push_back(k);
+		mod->increment();
+		if (mod->popError())
+			break;
+	}
+	return result;
 }
 
-std::vector<std::string> SwordLibrary::Keys(const std::string& moduleName,
-                                              const std::string& prefix,
-                                              int limit) const {
-    auto* mod = d->mgr->getModule(moduleName.c_str());
-    if (!mod) return {};
-
-    std::vector<std::string> result;
-
-    // For dictionary modules, use a StrKey and iterate
-    std::string moduleType = mapModuleType(mod->getType());
-    if (moduleType == "Dictionary") {
-        // Try iterating via StrKey
-        sword::StrKey sk("");
-        mod->setKey(&sk);
-        for (int i = 1; static_cast<int>(result.size()) < limit; i++) {
-            std::string num = std::to_string(i);
-            sword::StrKey sk2(num.c_str());
-            mod->setKey(&sk2);
-            const char* txt = mod->getKey()->getText();
-            if (txt == nullptr || txt[0] == 0) continue;
-            sword::SWBuf rendered = mod->renderText();
-            if (rendered.c_str()[0] == '\0') continue;
-            // Check if key matches prefix
-            std::string displayKey;
-            // Try to determine prefix from module name
-            if (moduleName.find("Greek") != std::string::npos || moduleName.find("Greek") != std::string::npos) {
-                displayKey = "G" + num;
-            } else if (moduleName.find("Hebrew") != std::string::npos) {
-                displayKey = "H" + num;
-            } else {
-                displayKey = num;
-            }
-            if (displayKey.find(prefix) == 0) {
-                result.push_back(displayKey);
-            }
-        }
-        return result;
-    }
-
-    // For Bible modules, use VersificationMgr to return book names
-    auto* sys = d->getVersificationForModule(moduleName);
-    if (sys) {
-        int bookCount = sys->getBookCount();
-        for (int i = 0; i < bookCount && static_cast<int>(result.size()) < limit; i++) {
-            const auto* book = sys->getBook(i);
-            if (book) {
-                std::string osisName = book->getOSISName();
-                if (osisName.find(prefix) == 0) {
-                    result.push_back(osisName);
-                }
-            }
-        }
-    }
-
-    return result;
-}
-
-}
+}	// namespace sheath

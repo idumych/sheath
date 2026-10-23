@@ -1,0 +1,38 @@
+name: haiku
+
+# Builds Sheath and its .hpkg in a Haiku R1/beta6 VM (cross-platform-actions) and runs the
+# core tests against Haiku's own libsword. The package installs on Haiku R1/beta6 and Renku OS.
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+jobs:
+  hpkg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache fixture modules
+        uses: actions/cache@v4
+        with:
+          path: .deps/dl
+          key: sword-fixtures-kjv-strongsgreek-v1
+      - name: Build on Haiku R1/beta6
+        uses: cross-platform-actions/action@v1.6.0
+        with:
+          operating_system: haiku
+          version: r1beta6
+          architecture: x86-64
+          memory: 4G
+          cpu_count: 4
+          shell: bash
+          run: |
+            . ./haiku-app.env
+            pkgman install -y gcc make haiku_devel pkgconfig $HPKG_BUILD_DEPS
+            uname -a
+            sh packaging/build-hpkg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sheath-hpkg
+          path: '*.hpkg'
+          if-no-files-found: error

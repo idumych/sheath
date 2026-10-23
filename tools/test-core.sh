@@ -12,7 +12,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 D=$ROOT/.deps
 
-# Runs in CI (Debian trixie, system libsword-dev + libsword-utils), never on the dev host.
+# Runs where libsword is installed: CI (Debian trixie, Haiku R1/beta6) or tools/trixie.sh.
 pkg-config --exists sword || { echo "  FAIL: libsword-dev not installed (run in CI: tools/ci-test.sh)"; echo "TOTAL 1 PASS 0 FAIL 1"; exit 1; }
 DIATHEKE=$(command -v diatheke) || { echo "  FAIL: diatheke not installed"; echo "TOTAL 1 PASS 0 FAIL 1"; exit 1; }
 export DIATHEKE
@@ -38,7 +38,8 @@ fi
 
 CXX=${CXX:-g++}
 CFLAGS="-std=c++17 -Wall -Wno-deprecated-declarations -g $(pkg-config --cflags sword) -Isrc/core -I$D/gen"
-LIBS="$(pkg-config --libs sword) -lsqlite3"
+LIBS="$(pkg-config --libs sword)"
+[ ! -f src/core/bookmarks_schema.sql ] || LIBS="$LIBS -lsqlite3"
 export SWORD_PATH=$FIX
 
 if [ $# -gt 0 ]; then names=$*; else
