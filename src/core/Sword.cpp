@@ -359,7 +359,7 @@ SearchResult SwordLibrary::Search(const std::string& module, const std::string& 
 	int flags = REG_ICASE;
 	switch (mode) {
 		case SearchMode::Phrase: type = -1; break;
-		case SearchMode::AllWords: type = -2; flags |= SEARCHFLAG_STRICTBOUNDARIES; break;
+		case SearchMode::AllWords: type = -2; break;
 		case SearchMode::Regex: type = 0; flags |= REG_EXTENDED; break;
 		case SearchMode::Strongs:
 			// Entry attributes Word/<n>/Lemma[.k] hold one Strong's number each; "Lemma." also
@@ -387,15 +387,21 @@ SearchResult SwordLibrary::Search(const std::string& module, const std::string& 
 		hits = mod->search(term.c_str(), type, flags, &scopeList);
 	}
 
-	// One result per element. (A multi-verse hit would be a range; take where it starts.)
-	result.total = hits.getCount();
-	for (int i = 0; i < hits.getCount() && (int)result.hits.size() < limit; i++) {
+	// SWORD's multi-word search also matches across two adjacent verses and returns those as
+	// a range; "all words" means within one verse, so ranges are dropped. (SWORD 1.9 has
+	// SEARCHFLAG_STRICTBOUNDARIES for this; Haiku ships 1.8.1.)
+	std::vector<std::string> refs;
+	for (int i = 0; i < hits.getCount(); i++) {
 		sword::SWKey* element = hits.getElement(i);
 		sword::VerseKey* range = dynamic_cast<sword::VerseKey*>(element);
-		if (range != nullptr && range->isBoundSet())
-			key->setText(range->getLowerBound().getText());
-		else
-			key->setText(element->getText());
+		if (range != nullptr && range->isBoundSet()
+				&& range->getLowerBound().getIndex() != range->getUpperBound().getIndex())
+			continue;
+		refs.push_back(element->getText());
+	}
+	result.total = (int)refs.size();
+	for (int i = 0; i < (int)refs.size() && (int)result.hits.size() < limit; i++) {
+		key->setText(refs[i].c_str());
 		SearchHit hit;
 		hit.book = key->getOSISBookName();
 		hit.chapter = key->getChapter();
