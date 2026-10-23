@@ -13,12 +13,28 @@ using namespace sheath;
 
 namespace {
 
-const rgb_color kText = {20, 20, 20, 255};
-const rgb_color kVerseNumber = {130, 130, 130, 255};
-const rgb_color kRed = {180, 20, 20, 255};
-const rgb_color kLink = {40, 90, 170, 255};
-const rgb_color kHeading = {60, 60, 60, 255};
-const rgb_color kBookmarked = {215, 120, 0, 255};
+// Text colours, derived from the system's document colours so dark themes work. Updated
+// before each render (UpdatePalette); every window computes the same values.
+rgb_color kText, kVerseNumber, kRed, kLink, kHeading, kBookmarked;
+
+rgb_color Mix(rgb_color a, rgb_color b, float t)
+{
+	return make_color((uint8)(a.red + (b.red - a.red) * t), (uint8)(a.green + (b.green - a.green) * t),
+		(uint8)(a.blue + (b.blue - a.blue) * t));
+}
+
+void UpdatePalette()
+{
+	rgb_color text = ui_color(B_DOCUMENT_TEXT_COLOR);
+	rgb_color back = ui_color(B_DOCUMENT_BACKGROUND_COLOR);
+	bool dark = back.Brightness() < 128;
+	kText = text;
+	kVerseNumber = Mix(text, back, 0.5f);
+	kHeading = Mix(text, back, 0.2f);
+	kRed = dark ? make_color(240, 110, 100) : make_color(180, 20, 20);
+	kLink = dark ? make_color(120, 170, 255) : make_color(40, 90, 170);
+	kBookmarked = dark ? make_color(255, 170, 60) : make_color(215, 120, 0);
+}
 
 }	// namespace
 
@@ -116,6 +132,7 @@ ChapterView::ChapterView(const char* name)
 void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSize,
 	const std::set<int>& bookmarked)
 {
+	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
 	RunBuilder b(fontSize);
@@ -173,6 +190,7 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, float fontSiz
 
 void ChapterView::SetEntry(const std::string& xhtml, float fontSize)
 {
+	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
 	RunBuilder b(fontSize);
@@ -193,6 +211,7 @@ void ChapterView::SetEntry(const std::string& xhtml, float fontSize)
 
 void ChapterView::SetMessageText(const char* text, float fontSize)
 {
+	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
 	RunBuilder b(fontSize);
