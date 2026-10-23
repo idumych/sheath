@@ -1,0 +1,11 @@
+/Sheath
+obj/
+dist/
+build/
+.deps/
+*.deb
+*.hpkg
+*.AppImage
+.cosmoe/
+.haiku-headers/
+.vos-sdk/
