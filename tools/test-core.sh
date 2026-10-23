@@ -1,121 +1,66 @@
 #!/bin/sh
-# Builds libsword (if needed) and compiles + runs the Sheath core tests.
-# Usage: sh tools/test-core.sh
-set -eu
+# Builds and runs Sheath's host-side tests. The only way to run them.
+#   sh tools/test-core.sh [name...]     e.g. sh tools/test-core.sh layout
+# Runs in CI only (tools/ci-test.sh). Every tests/test_<name>.cpp is linked with all of src/core/*.cpp, libsword and sqlite3,
+# and run with a 120 s timeout. Test lines look like "  PASS: <name>" / "  FAIL: <name>: ...".
+# Prints a last line "TOTAL <n> PASS <p> FAIL <f>"; exits 1 if f > 0 or n == 0.
+# A binary that fails to build, crashes or times out counts as a FAIL line.
+# Fixtures (.deps/fixtures/sword: CrossWire KJV + StrongsGreek) are read-only; each binary gets
+# its own empty scratch dir in $SHEATH_TMP (.deps/tmp/<name>) for anything it writes.
+set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
+D=$ROOT/.deps
 
-# ---- build libsword if missing ----
-if [ ! -f .deps/sword/lib/libsword.so ]; then
-  echo "Building libsword…"
-  sh tools/build-sword.sh
+# Runs in CI (Debian trixie, system libsword-dev + libsword-utils), never on the dev host.
+pkg-config --exists sword || { echo "  FAIL: libsword-dev not installed (run in CI: tools/ci-test.sh)"; echo "TOTAL 1 PASS 0 FAIL 1"; exit 1; }
+DIATHEKE=$(command -v diatheke) || { echo "  FAIL: diatheke not installed"; echo "TOTAL 1 PASS 0 FAIL 1"; exit 1; }
+export DIATHEKE
+
+FIX=$D/fixtures/sword
+if [ ! -f "$FIX/mods.d/kjv.conf" ]; then
+	echo "Preparing fixture modules..."
+	mkdir -p "$D/dl" "$FIX"
+	for m in KJV StrongsGreek; do
+		[ -s "$D/dl/$m.zip" ] || curl -fsSL -o "$D/dl/$m.zip" \
+			"https://crosswire.org/ftpmirror/pub/sword/packages/rawzip/$m.zip" ||
+			{ echo "  FAIL: fixture download $m"; echo "TOTAL 1 PASS 0 FAIL 1"; exit 1; }
+		unzip -q -o "$D/dl/$m.zip" -d "$FIX"
+	done
+	chmod -R a-w "$FIX"
 fi
 
-# ---- prepare fixture modules ----
-FIXTURE_DIR="$ROOT/.deps/fixtures/sword"
-NEED_FIXTURES=0
-[ ! -d "$FIXTURE_DIR" ] && NEED_FIXTURES=1
-# Check if KJV module data actually exists (not just conf files)
-if [ -d "$FIXTURE_DIR/modules/texts/ztext/kjv" ]; then
-  : # OK, data exists
-else
-  NEED_FIXTURES=1
-fi
-if [ "$NEED_FIXTURES" -eq 1 ]; then
-  echo "Downloading fixture modules…"
-  mkdir -p "$FIXTURE_DIR" "$ROOT/.deps/dl"
-  cd "$ROOT/.deps/dl"
-  [ -f kjv.zip ] || curl -fsSLO -L \
-    https://crosswire.org/ftpmirror/pub/sword/packages/rawzip/KJV.zip
-  [ -f strongs.zip ] || curl -fsSLO -L \
-    https://crosswire.org/ftpmirror/pub/sword/packages/rawzip/StrongsGreek.zip
-  rm -rf mods.d modules
-  unzip -o kjv.zip
-  unzip -o strongs.zip
-  cd "$ROOT"
-  mkdir -p "$FIXTURE_DIR/mods.d" "$FIXTURE_DIR/modules"
-  cp -r "$ROOT/.deps/dl/mods.d"/* "$FIXTURE_DIR/mods.d/" 2>/dev/null || true
-  cp -r "$ROOT/.deps/dl/modules"/* "$FIXTURE_DIR/modules/" 2>/dev/null || true
-  echo "Fixtures ready: $FIXTURE_DIR"
+mkdir -p "$D/gen" "$D/tmp" "$D/bin"
+if [ -f src/core/bookmarks_schema.sql ]; then
+	{ printf 'static const char* kBookmarksSchema = R"SQL('; cat src/core/bookmarks_schema.sql; printf ')SQL";\n'; } \
+		> "$D/gen/bookmarks_schema.h"
 fi
 
-# ---- compile test ----
-echo "Compiling test_core…"
-CXX="${CXX:-g++}"
-SWORD_INC="-I.deps/sword/include -I.deps/sword/include/sword"
-CORE_INC="-Isrc/core"
-OUT="$ROOT/.deps/test_core"
-$CXX -std=gnu++17 $SWORD_INC $CORE_INC -o "$OUT" \
-  tests/test_core.cpp \
-  src/core/Sword.cpp src/core/Markup.cpp src/core/Ref.cpp \
-  -L.deps/sword/lib -lsword -lbz2 -lz
+CXX=${CXX:-g++}
+CFLAGS="-std=c++17 -Wall -Wno-deprecated-declarations -g $(pkg-config --cflags sword) -Isrc/core -I$D/gen"
+LIBS="$(pkg-config --libs sword) -lsqlite3"
+export SWORD_PATH=$FIX
 
-# ---- run tests ----
-echo "Running tests…"
-export SWORD_PATH="$FIXTURE_DIR"
-export LD_LIBRARY_PATH="$ROOT/.deps/sword/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-# Run with timeout, capture output
-TMPLOG="$ROOT/.deps/tmp/test_output.log"
-mkdir -p "$ROOT/.deps/tmp"
-EXITCODE=0
-if ! timeout 120 "$OUT" > "$TMPLOG" 2>&1; then
-  EXITCODE=$?
-  if [ "$EXITCODE" -eq 124 ]; then
-    echo "Test binary timed out after 120s"
-  else
-    echo "Test binary crashed or returned non-zero"
-  fi
+if [ $# -gt 0 ]; then names=$*; else
+	names=$(for f in tests/test_*.cpp; do n=${f#tests/test_}; echo "${n%.cpp}"; done)
 fi
+LOG=$D/tmp/test-core.log
+: > "$LOG"
+for n in $names; do
+	echo "== test_$n" | tee -a "$LOG"
+	if ! $CXX $CFLAGS -o "$D/bin/test_$n" "tests/test_$n.cpp" src/core/*.cpp $LIBS > "$D/tmp/build_$n.log" 2>&1; then
+		grep -m 15 -E 'error' "$D/tmp/build_$n.log"
+		echo "  FAIL: test_$n build failed (see .deps/tmp/build_$n.log)" | tee -a "$LOG"
+		continue
+	fi
+	rm -rf "$D/tmp/$n" && mkdir -p "$D/tmp/$n"
+	SHEATH_TMP=$D/tmp/$n timeout 120 "$D/bin/test_$n" > "$D/tmp/out_$n.log" 2>&1
+	rc=$?
+	tee -a "$LOG" < "$D/tmp/out_$n.log" | grep -E '^  (PASS|FAIL):'
+	[ $rc -eq 0 ] || echo "  FAIL: test_$n exited with status $rc$( [ $rc -eq 124 ] && echo ' (timeout)')" | tee -a "$LOG"
+done
 
-# ---- compile test_layout ----
-echo "Compiling test_layout…"
-$CXX -std=gnu++17 $CORE_INC -o "$ROOT/.deps/test_layout" \
-  tests/test_layout.cpp \
-  src/core/Layout.cpp src/core/Markup.cpp
-
-# ---- run test_layout ----
-echo "Running test_layout…"
-EXITCODE_LAYOUT=0
-if ! timeout 300 "$ROOT/.deps/test_layout" >> "$TMPLOG" 2>&1; then
-  EXITCODE_LAYOUT=$?
-  if [ "$EXITCODE_LAYOUT" -eq 124 ]; then
-    echo "test_layout timed out after 300s"
-  else
-    echo "test_layout crashed or returned non-zero"
-  fi
-fi
-
-# Count PASS/FAIL from output lines matching the test format
-TOTAL=0; PASS=0; FAIL=0
-if grep -q '^  PASS:' "$TMPLOG" 2>/dev/null; then
-  TOTAL=$(grep -c '^  PASS:' "$TMPLOG")
-  PASS=$TOTAL
-fi
-if grep -q '^  FAIL:' "$TMPLOG" 2>/dev/null; then
-  FAIL=$(grep -c '^  FAIL:' "$TMPLOG")
-fi
-
-# If the binary crashed or timed out, count as a failure
-if [ "$EXITCODE" -ne 0 ] || [ "$EXITCODE_LAYOUT" -ne 0 ]; then
-  FAIL=$((FAIL + 1))
-  TOTAL=$((PASS + FAIL))
-fi
-
-# If no tests ran at all (TOTAL == 0), that's a failure
-if [ "$TOTAL" -eq 0 ]; then
-  FAIL=1
-  TOTAL=0
-fi
-
-echo ""
-cat "$TMPLOG"
-echo ""
-echo "TOTAL $TOTAL PASS $PASS FAIL $FAIL"
-
-# Exit 1 if failures or no tests
-if [ "$FAIL" -gt 0 ] || [ "$TOTAL" -eq 0 ]; then
-  exit 1
-fi
-
-exit 0
+p=$(grep -c '^  PASS:' "$LOG")
+f=$(grep -c '^  FAIL:' "$LOG")
+echo "TOTAL $((p + f)) PASS $p FAIL $f"
+[ "$f" -eq 0 ] && [ $((p + f)) -gt 0 ]
