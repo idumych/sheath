@@ -57,6 +57,7 @@ private:
 	class RunBuilder;
 
 	const LinkRange* LinkAt(BPoint where) const;
+	void Render(RunBuilder& builder);
 
 	std::vector<LinkRange> fLinks;
 	std::vector<VerseStart> fVerses;

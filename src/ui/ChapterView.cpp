@@ -248,8 +248,7 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, const Reading
 				b.Add("\n", b.Base(), kText, true);
 		}
 	}
-	b.ApplyTo(this);
-	ScrollToOffset(0);
+	Render(b);
 }
 
 
@@ -269,8 +268,7 @@ void ChapterView::SetEntry(const std::string& xhtml, const ReadingStyle& style)
 				fLinks.push_back({start, b.Length(), run.link, 0});
 		}
 	}
-	b.ApplyTo(this);
-	ScrollToOffset(0);
+	Render(b);
 }
 
 
@@ -281,7 +279,19 @@ void ChapterView::SetMessageText(const char* text, const ReadingStyle& style)
 	fVerses.clear();
 	RunBuilder b(style);
 	b.Add(text, b.Base(), kHeading);
-	b.ApplyTo(this);
+	Render(b);
+}
+
+
+void ChapterView::Render(RunBuilder& builder)
+{
+	// Replacing the text scrolls to the top; that isn't the user scrolling, so the parallel
+	// view must not follow it.
+	fSyncing = true;
+	builder.ApplyTo(this);
+	ScrollToOffset(0);
+	fLastTopVerse = VerseAtTop();
+	fSyncing = false;
 }
 
 
