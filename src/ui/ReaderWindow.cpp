@@ -11,6 +11,7 @@
 #include <MenuItem.h>
 #include <PopUpMenu.h>
 #include <ScrollView.h>
+#include <SplitView.h>
 #include <TextControl.h>
 
 #include <cstdio>
@@ -44,6 +45,7 @@ enum {
 	kMsgCopyVerse = 'cpyv',
 	kMsgToggleBookmark = 'tgbm',
 	kMsgOpenBookmark = 'opbm',
+	kMsgParallel = 'prll',
 };
 
 const char* kOptionNames[] = {"Strong's numbers", "Footnotes", "Headings", "Words of Christ in red"};
@@ -93,6 +95,10 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	fViewMenu->AddItem(new BMenuItem("Larger text", new BMessage(kMsgBigger), '+'));
 	fViewMenu->AddItem(new BMenuItem("Smaller text", new BMessage(kMsgSmaller), '-'));
 	fViewMenu->AddSeparatorItem();
+	fParallelMenu = new BMenu("Parallel Bible");
+	fParallelMenu->SetRadioMode(true);
+	fViewMenu->AddItem(fParallelMenu);
+	fViewMenu->AddSeparatorItem();
 	for (int i = 0; i < 4; i++) {
 		BMessage* msg = new BMessage(kMsgToggle);
 		msg->AddInt32("option", i);
@@ -110,6 +116,10 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	fRefControl->SetToolTip("Go to a reference, e.g. John 3:16");
 	fText = new ChapterView("text");
 	BScrollView* scroll = new BScrollView("scroll", fText, 0, false, true, B_NO_BORDER);
+	fText2 = new ChapterView("parallel");
+	fScroll2 = new BScrollView("scroll2", fText2, 0, false, true, B_NO_BORDER);
+	BSplitView* split = new BSplitView(B_HORIZONTAL, 0);
+	BLayoutBuilder::Split<>(split).Add(scroll).Add(fScroll2);
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
@@ -122,7 +132,8 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 			.AddGlue()
 			.Add(fRefControl, 2.0f)
 		.End()
-		.Add(scroll);
+		.Add(split);
+	fScroll2->Hide();
 
 	fSearch = new SearchWindow(fLibrary, BMessenger(this));
 	fSearch->Hide();
@@ -238,6 +249,7 @@ bool ReaderWindow::QuitRequested()
 	state.AddInt32("chapter", s.chapter);
 	state.AddInt32("verse", s.verse);
 	state.AddFloat("fontSize", s.fontSize);
+	state.AddString("parallel", s.parallel.c_str());
 	for (int i = 0; i < 4; i++)
 		state.AddBool(kOptionNames[i], *OptionField(s.options, i));
 	state.AddRect("frame", Frame());
@@ -283,6 +295,25 @@ void ReaderWindow::BuildModuleMenu()
 		none->SetEnabled(false);
 		fModuleMenu->AddItem(none);
 	}
+	while (BMenuItem* item = fParallelMenu->RemoveItem((int32)0))
+		delete item;
+	bool parallelFound = false;
+	BMessage* none = new BMessage(kMsgParallel);
+	none->AddString("module", "");
+	fParallelMenu->AddItem(new BMenuItem("None", none));
+	for (const ModuleInfo& m : bibles) {
+		BMessage* msg = new BMessage(kMsgParallel);
+		msg->AddString("module", m.name.c_str());
+		BMenuItem* item = new BMenuItem(m.name.c_str(), msg);
+		item->SetMarked(m.name == fState.parallel);
+		parallelFound = parallelFound || m.name == fState.parallel;
+		fParallelMenu->AddItem(item);
+	}
+	if (!parallelFound) {
+		fState.parallel = "";
+		fParallelMenu->ItemAt(0)->SetMarked(true);
+	}
+
 	fModuleMenu->AddSeparatorItem();
 	BMenuItem* install = new BMenuItem("Install modules" "\xE2\x80\xA6",
 		new BMessage(kMsgInstallWindow));
@@ -365,8 +396,27 @@ void ReaderWindow::ShowChapter(int scrollToVerse)
 		if (scrollToVerse > 1)
 			fText->ScrollToVerse(scrollToVerse);
 	}
+
+	bool parallel = !fState.parallel.empty();
+	fText->SetScrollNotify(parallel);
+	fText2->SetScrollNotify(parallel);
+	if (parallel) {
+		fVerses2 = fLibrary->Chapter(fState.parallel, fState.book, fState.chapter, fState.options);
+		if (fVerses2.empty())
+			fText2->SetMessageText("This chapter is empty in this module.", fState.fontSize);
+		else
+			fText2->SetChapter(fVerses2, fState.fontSize);
+		fText2->SyncToVerse(fText->VerseAtTop());
+		if (fScroll2->IsHidden())
+			fScroll2->Show();
+	} else {
+		fVerses2.clear();
+		if (!fScroll2->IsHidden())
+			fScroll2->Hide();
+	}
+
 	std::string title = FormatRef({fState.book, fState.chapter, 0}) + " \xE2\x80\x94 "
-		+ fState.module + " \xE2\x80\x94 Sheath";
+		+ fState.module + (parallel ? " | " + fState.parallel : "") + " \xE2\x80\x94 Sheath";
 	SetTitle(title.c_str());
 	BuildChapterMenu();
 }
@@ -397,7 +447,7 @@ void ReaderWindow::Step(int delta)
 }
 
 
-void ReaderWindow::OpenLink(int32 kind, const std::string& target, int verse)
+void ReaderWindow::OpenLink(int32 kind, const std::string& target, int verse, bool inParallel)
 {
 	switch ((LinkKind)kind) {
 		case LinkKind::Strongs: {
@@ -412,7 +462,7 @@ void ReaderWindow::OpenLink(int32 kind, const std::string& target, int verse)
 			break;
 		}
 		case LinkKind::Footnote: {
-			for (const VerseText& v : fVerses) {
+			for (const VerseText& v : inParallel ? fVerses2 : fVerses) {
 				auto note = v.notes.find(target);
 				if (v.verse == verse && note != v.notes.end()) {
 					std::string title = "Note on " + FormatRef({fState.book, fState.chapter, verse});
@@ -522,6 +572,18 @@ void ReaderWindow::MessageReceived(BMessage* message)
 				message->GetInt32("verse", 0));
 			Activate();
 			break;
+		case kMsgParallel:
+			fState.parallel = message->GetString("module", "");
+			ShowChapter(fText->VerseAtTop());
+			break;
+		case ChapterView::kMsgScrolled: {
+			ChapterView* source = nullptr;
+			message->FindPointer("view", (void**)&source);
+			ChapterView* other = source == fText ? fText2 : fText;
+			if (!fState.parallel.empty())
+				other->SyncToVerse(message->GetInt32("verse", 1));
+			break;
+		}
 		case ChapterView::kMsgVerseMenu:
 			ShowVerseMenu(message->GetInt32("verse", 0), message->GetPoint("where", BPoint()));
 			break;
@@ -536,8 +598,12 @@ void ReaderWindow::MessageReceived(BMessage* message)
 				message->GetInt32("verse", 0));
 			break;
 		case ChapterView::kMsgLinkClicked:
+		{
+			void* view = nullptr;
+			message->FindPointer("view", &view);
 			OpenLink(message->GetInt32("kind", 0), message->GetString("target", ""),
-				message->GetInt32("verse", 0));
+				message->GetInt32("verse", 0), view == fText2);
+		}
 			break;
 		default:
 			BWindow::MessageReceived(message);

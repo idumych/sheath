@@ -17,6 +17,7 @@ class ChapterView : public BTextView {
 public:
 	static const uint32 kMsgLinkClicked = 'lnkc';
 	static const uint32 kMsgVerseMenu = 'vrsm';
+	static const uint32 kMsgScrolled = 'scrl';	// "verse" now at the top, "view" (pointer)
 
 	explicit ChapterView(const char* name);
 
@@ -27,6 +28,11 @@ public:
 	void SetMessageText(const char* text, float fontSize);	// "no modules installed" etc.
 
 	void ScrollToVerse(int verse);
+	void SyncToVerse(int verse);		// ScrollToVerse without sending kMsgScrolled
+	void SetScrollNotify(bool notify) { fNotify = notify; }
+
+	using BTextView::ScrollTo;
+	void ScrollTo(BPoint where) override;
 	int VerseAtTop() const;
 	int VerseAt(BPoint where) const;		// 0 if none
 
@@ -43,4 +49,7 @@ private:
 
 	std::vector<LinkRange> fLinks;
 	std::vector<VerseStart> fVerses;
+	bool fNotify = false;
+	bool fSyncing = false;
+	int fLastTopVerse = 0;
 };

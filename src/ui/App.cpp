@@ -36,6 +36,7 @@ public:
 
 		ReaderState state;
 		state.module = settings.GetString("module", "");
+		state.parallel = settings.GetString("parallel", "");
 		state.book = settings.GetString("book", "John");
 		state.chapter = settings.GetInt32("chapter", 1);
 		state.verse = settings.GetInt32("verse", 0);

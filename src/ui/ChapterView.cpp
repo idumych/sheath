@@ -235,6 +235,31 @@ void ChapterView::ScrollToVerse(int verse)
 }
 
 
+void ChapterView::SyncToVerse(int verse)
+{
+	fSyncing = true;
+	ScrollToVerse(verse);
+	fLastTopVerse = VerseAtTop();
+	fSyncing = false;
+}
+
+
+void ChapterView::ScrollTo(BPoint where)
+{
+	BTextView::ScrollTo(where);
+	if (!fNotify || fSyncing || Window() == nullptr || fVerses.empty())
+		return;
+	int verse = VerseAtTop();
+	if (verse == fLastTopVerse)
+		return;
+	fLastTopVerse = verse;
+	BMessage msg(kMsgScrolled);
+	msg.AddInt32("verse", verse);
+	msg.AddPointer("view", this);
+	Window()->PostMessage(&msg);
+}
+
+
 int ChapterView::VerseAtTop() const
 {
 	int32 top = OffsetAt(Bounds().LeftTop() + BPoint(0, 4));
@@ -299,6 +324,7 @@ void ChapterView::MouseDown(BPoint where)
 	msg.AddInt32("kind", (int32)link->link.kind);
 	msg.AddString("target", link->link.target.c_str());
 	msg.AddInt32("verse", link->verse);
+	msg.AddPointer("view", this);
 	Window()->PostMessage(&msg);
 }
 
