@@ -359,7 +359,7 @@ SearchResult SwordLibrary::Search(const std::string& module, const std::string& 
 	int flags = REG_ICASE;
 	switch (mode) {
 		case SearchMode::Phrase: type = -1; break;
-		case SearchMode::AllWords: type = -2; break;
+		case SearchMode::AllWords: type = -2; flags |= SEARCHFLAG_STRICTBOUNDARIES; break;
 		case SearchMode::Regex: type = 0; flags |= REG_EXTENDED; break;
 		case SearchMode::Strongs:
 			// Entry attributes Word/<n>/Lemma[.k] hold one Strong's number each; "Lemma." also
@@ -387,9 +387,15 @@ SearchResult SwordLibrary::Search(const std::string& module, const std::string& 
 		hits = mod->search(term.c_str(), type, flags, &scopeList);
 	}
 
+	// One result per element. (A multi-verse hit would be a range; take where it starts.)
 	result.total = hits.getCount();
-	for (hits = sword::TOP; !hits.popError() && (int)result.hits.size() < limit; hits++) {
-		key->setText(hits.getText());
+	for (int i = 0; i < hits.getCount() && (int)result.hits.size() < limit; i++) {
+		sword::SWKey* element = hits.getElement(i);
+		sword::VerseKey* range = dynamic_cast<sword::VerseKey*>(element);
+		if (range != nullptr && range->isBoundSet())
+			key->setText(range->getLowerBound().getText());
+		else
+			key->setText(element->getText());
 		SearchHit hit;
 		hit.book = key->getOSISBookName();
 		hit.chapter = key->getChapter();

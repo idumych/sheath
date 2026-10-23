@@ -1,7 +1,9 @@
 // Spec tests for SwordLibrary::Search. Written by Claude. Expected results come from diatheke
-// (the SWORD command-line front end) run at test time, except Strong's search: diatheke's
-// attribute search matches substrings (G25 also finds G2532), so that one is checked against
-// the Strong's links in the rendered chapters instead.
+// (the SWORD command-line front end) run at test time, using only its regex search: its phrase
+// and multiword types break where char is unsigned (arm64: `char st = 1 - searchtype`). A phrase
+// equals a case-insensitive regex for it; "all words" equals the verses each word's regex finds.
+// Strong's search: diatheke's attribute search matches substrings (G25 also finds G2532), so it
+// is checked against the Strong's links in the rendered chapters instead.
 #include "check.h"
 #include "Markup.h"
 #include "Ref.h"
@@ -65,10 +67,39 @@ static std::string join(const std::vector<std::string>& v)
 	return s;
 }
 
+// Verses (in diatheke's order) found by a regex search for every word of the query.
+static DiathekeResult all_words(const std::string& query, const std::string& scope)
+{
+	DiathekeResult r;
+	std::vector<std::string> words;
+	std::string w;
+	for (char c : query + " ") {
+		if (c == ' ') { if (!w.empty()) words.push_back(w); w.clear(); }
+		else w += c;
+	}
+	std::vector<std::set<std::string>> sets;
+	for (size_t i = 0; i < words.size(); i++) {
+		DiathekeResult one = diatheke_search("regex", words[i], scope);
+		if (one.total < 0) return r;
+		if (i == 0) r.refs = one.refs;
+		sets.push_back(std::set<std::string>(one.refs.begin(), one.refs.end()));
+	}
+	std::vector<std::string> both;
+	for (const std::string& ref : r.refs) {
+		bool inAll = true;
+		for (auto& s : sets) inAll = inAll && s.count(ref);
+		if (inAll) both.push_back(ref);
+	}
+	r.refs = both;
+	r.total = (int)both.size();
+	return r;
+}
+
 static void compare(SwordLibrary& lib, SearchMode mode, const std::string& type,
 	const std::string& query, const std::string& scope, const std::string& name)
 {
-	DiathekeResult want = diatheke_search(type, query, scope);
+	DiathekeResult want = type == "multiword" ? all_words(query, scope)
+		: diatheke_search("regex", query, scope);	// phrase and regex
 	check_true(want.total > 0, name + ": diatheke found matches", std::to_string(want.total));
 	SearchResult got = lib.Search("KJV", query, mode, scope, 100000);
 	check_eq(got.total, want.total, name + ": total equals diatheke");
