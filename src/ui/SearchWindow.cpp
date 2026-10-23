@@ -60,11 +60,11 @@ private:
 }	// namespace
 
 
-SearchWindow::SearchWindow(SwordLibrary* library, BMessenger reader)
+SearchWindow::SearchWindow(BMessenger reader)
 	:
 	BWindow(BRect(120, 100, 680, 560), "Search", B_TITLED_WINDOW,
 		B_AUTO_UPDATE_SIZE_LIMITS | B_CLOSE_ON_ESCAPE),
-	fLibrary(library),
+	fLibrary(""),
 	fReader(reader)
 {
 	fQuery = new BTextControl("query", nullptr, "", new BMessage(kMsgSearch));
@@ -107,6 +107,8 @@ void SearchWindow::Start(const std::string& module, const std::string& currentBo
 {
 	fModule = module;
 	fBook = currentBook;
+	if (!fLibrary.Find(module))
+		fLibrary.Reload();		// installed since this window opened
 	SetTitle(("Search " + module).c_str());
 	if (!query.empty()) {
 		fQuery->SetText(query.c_str());
@@ -136,7 +138,7 @@ void SearchWindow::RunSearch()
 	int mode = fModeField->Menu()->IndexOf(fModeField->Menu()->FindMarked());
 	int scopeIndex = fScopeField->Menu()->IndexOf(fScopeField->Menu()->FindMarked());
 	std::string scope;
-	std::vector<BookInfo> books = fLibrary->Books(fModule);
+	std::vector<BookInfo> books = fLibrary.Books(fModule);
 	if (scopeIndex == 1 || scopeIndex == 2) {
 		// The testament's first to last book, in this module's versification.
 		std::string first, last;
@@ -156,7 +158,7 @@ void SearchWindow::RunSearch()
 
 	fStatus->SetText("Searching" "\xE2\x80\xA6");
 	UpdateIfNeeded();
-	SearchResult result = fLibrary->Search(fModule, query, kModeValues[mode < 0 ? 0 : mode],
+	SearchResult result = fLibrary.Search(fModule, query, kModeValues[mode < 0 ? 0 : mode],
 		scope, kMaxHits);
 	BList items;
 	for (const SearchHit& hit : result.hits)

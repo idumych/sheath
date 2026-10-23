@@ -138,7 +138,7 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 		.Add(split);
 	fScroll2->Hide();
 
-	fSearch = new SearchWindow(fLibrary, BMessenger(this));
+	fSearch = new SearchWindow(BMessenger(this));
 	fSearch->Hide();
 	fSearch->Show();	// run its looper hidden, so Start() can be called any time
 

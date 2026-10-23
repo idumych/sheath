@@ -18,7 +18,7 @@ class SearchWindow : public BWindow {
 public:
 	static const uint32 kMsgShowVerse = 'shvr';
 
-	SearchWindow(sheath::SwordLibrary* library, BMessenger reader);
+	explicit SearchWindow(BMessenger reader);
 
 	// Shows the window searching `module`; with a query, runs it right away.
 	void Start(const std::string& module, const std::string& currentBook,
@@ -30,7 +30,8 @@ public:
 private:
 	void RunSearch();
 
-	sheath::SwordLibrary* fLibrary;
+	// Its own library: a long search then doesn't hold the reader's library lock.
+	sheath::SwordLibrary fLibrary;
 	BMessenger fReader;
 	std::string fModule;
 	std::string fBook;
