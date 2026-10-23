@@ -1,21 +1,26 @@
 ---
 name: sheath-dev
-description: How to build, test and write code for Sheath (native Bible reader, C++17, libsword 1.9.0, sqlite3, Be API). Load before any Sheath task.
+description: How to build, test and write code for Sheath (native Bible reader for Renku OS/Haiku, C++17, libsword, Be API). Load before any Sheath task.
 ---
 
 # Sheath development
+
+Layout: src/core/ = portable C++ with no Haiku headers (Sword, Markup, Ref, Bookmarks, Installer),
+tested by tests/test_*.cpp; src/ui/ = the Be API app (ChapterView is a styled BTextView).
+First release: an .hpkg for Renku OS / Haiku R1/beta6, built by .github/workflows/haiku.yml.
 
 ## Building and testing
 Everything runs inside a Debian trixie root (same libsword-dev as CI and VitruvianOS). Never run
 g++, make or tests directly on the host; the host has no libsword.
 - Fast loop (seconds), use this while working:
   `TEST_TIMEOUT=20 timeout 300 sh tools/trixie.sh sh tools/test-core.sh <name>`
-  where <name> is the test file suffix: `text` (tests/test_text.cpp), `layout`, ... Omit <name>
+  where <name> is the test file suffix: `text` (tests/test_text.cpp), `search`, `bookmarks`, `install` Omit <name>
   for all. Prints every PASS/FAIL line and `TOTAL n PASS p FAIL f`.
 - Debug inside it, always with a timeout:
   `timeout 60 sh tools/trixie.sh gdb -batch -ex run -ex 'bt 15' --args .deps/bin/test_text`
   (for a hang: `timeout 60 sh tools/trixie.sh timeout -s INT 15 gdb -batch -ex run -ex 'bt 15' --args .deps/bin/test_text`)
-- Final check (both architectures, a few minutes): `timeout 2000 sh tools/ci-test.sh`.
+- UI code: `sh tools/haiku-typecheck.sh` type-checks src/ui against Haiku's headers (seconds).
+- Final check (Debian amd64/arm64 + Haiku R1/beta6, a few minutes): `timeout 2000 sh tools/ci-test.sh`.
   Run it once at the end, after the fast loop passes.
 - Don't use git (ci-test.sh does its own push). Don't write in /tmp; scratch goes in .deps/tmp/.
 - Tests that write files must write only under scratch_dir() (tests/check.h); the fixture modules
