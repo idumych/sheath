@@ -18,6 +18,7 @@
 #include "EntryWindow.h"
 #include "Markup.h"
 #include "Ref.h"
+#include "InstallWindow.h"
 #include "SearchWindow.h"
 
 using namespace sheath;
@@ -35,6 +36,7 @@ enum {
 	kMsgSmaller = 'smlr',
 	kMsgToggle = 'togl',
 	kMsgSearchWindow = 'srwn',
+	kMsgInstallWindow = 'inwn',
 };
 
 const char* kOptionNames[] = {"Strong's numbers", "Footnotes", "Headings", "Words of Christ in red"};
@@ -183,6 +185,10 @@ void ReaderWindow::BuildModuleMenu()
 		none->SetEnabled(false);
 		fModuleMenu->AddItem(none);
 	}
+	fModuleMenu->AddSeparatorItem();
+	BMenuItem* install = new BMenuItem("Install modules" "\xE2\x80\xA6",
+		new BMessage(kMsgInstallWindow));
+	fModuleMenu->AddItem(install);
 	BuildBookMenu();
 }
 
@@ -242,9 +248,9 @@ void ReaderWindow::ShowChapter(int scrollToVerse)
 {
 	if (fState.module.empty()) {
 		fVerses.clear();
-		fText->SetMessageText("No Bible modules are installed.\n\n"
-			"Install SWORD modules (for example KJV) into ~/.sword or the system SWORD "
-			"directory, then restart Sheath.", fState.fontSize);
+		fText->SetMessageText("No Bible is installed yet.\n\n"
+			"Choose Bible \xE2\x96\xB8 Install modules\xE2\x80\xA6 to download one, "
+			"for example the King James Version (KJV).", fState.fontSize);
 		SetTitle("Sheath");
 		return;
 	}
@@ -385,6 +391,16 @@ void ReaderWindow::MessageReceived(BMessage* message)
 			ShowChapter(fText->VerseAtTop());
 			break;
 		}
+		case kMsgInstallWindow: {
+			const char* home = getenv("HOME");
+			std::string userDir = std::string(home ? home : "/boot/home") + "/.sword";
+			(new InstallWindow(userDir, BMessenger(this)))->Show();
+			break;
+		}
+		case InstallWindow::kMsgLibraryChanged:
+			fLibrary->Reload();
+			LibraryChanged();
+			break;
 		case kMsgSearchWindow:
 			if (fSearch->Lock()) {
 				fSearch->Start(fState.module, fState.book);
