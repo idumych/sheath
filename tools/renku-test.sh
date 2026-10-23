@@ -69,7 +69,10 @@ install|fresh)
 		echo "fresh: settings, bookmarks and ~/.sword removed"
 	fi
 	scp -q "$pkg" $VM:/boot/home/sheath.hpkg
-	ssh $VM 'pkgman install -y /boot/home/sheath.hpkg 2>&1 | tail -1
+	# pkgman keeps an installed package with the same name and version, so remove it first.
+	ssh $VM 'pkgman uninstall -y sheath > /dev/null 2>&1
+		pkgman install -y /boot/home/sheath.hpkg 2>&1 | tail -1
+		ls -l /boot/system/packages/sheath-*.hpkg | sed "s/.* \([0-9][0-9]*\) [A-Z][a-z]* .*/installed package: \1 bytes/"
 		listattr /boot/system/apps/Sheath | grep -c BEOS: | sed "s/^/attributes: /"
 		(Sheath > /tmp/sheath.log 2>&1 &)'
 	sleep 4

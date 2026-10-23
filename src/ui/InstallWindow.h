@@ -43,6 +43,7 @@ private:
 	std::thread fWorker;
 	bool fBusy = false;
 	std::vector<sheath::RemoteModule> fModules;
+	std::string fLanguage = "en";		// preferred; "" = all languages
 
 	BMenuField* fSourceField;
 	BMenuField* fLanguageField;

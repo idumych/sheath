@@ -29,6 +29,7 @@ enum {
 	kMsgFilter = 'filt',
 	kMsgSelect = 'slct',
 	kMsgJobDone = 'jobd',
+	kMsgLanguage = 'lang',
 };
 
 const char* kTypes[] = {"All types", "Bible", "Commentary", "Dictionary", "Book"};
@@ -117,6 +118,8 @@ InstallWindow::InstallWindow(const std::string& userDir, BMessenger reader)
 	fList->SetSelectionMessage(new BMessage(kMsgSelect));
 	fList->SetInvocationMessage(new BMessage(kMsgInstall));
 	BScrollView* scroll = new BScrollView("scroll", fList, 0, false, true);
+	// Without a minimum the window shrinks to the list's preferred size when it fills.
+	scroll->SetExplicitMinSize(BSize(be_plain_font->StringWidth("m") * 45, 240));
 
 	fRefresh = new BButton("refresh", "Refresh list", new BMessage(kMsgRefresh));
 	fInstall = new BButton("install", "Install", new BMessage(kMsgInstall));
@@ -172,17 +175,22 @@ std::string InstallWindow::SelectedModule() const
 
 void InstallWindow::FillList()
 {
-	// Languages present in the list; keep the user's choice if it's still there.
+	// Languages present in the list; the preferred one is marked if it's there.
 	BMenu* langMenu = fLanguageField->Menu();
-	std::string chosen = langMenu->FindMarked() ? langMenu->FindMarked()->Label() : "en";
+	std::string chosen = fLanguage.empty() ? "All languages" : fLanguage;
 	std::set<std::string> languages;
 	for (const RemoteModule& m : fModules)
 		languages.insert(m.language.empty() ? "?" : m.language);
 	while (BMenuItem* item = langMenu->RemoveItem((int32)0))
 		delete item;
-	langMenu->AddItem(new BMenuItem("All languages", new BMessage(kMsgFilter)));
-	for (const std::string& l : languages)
-		langMenu->AddItem(new BMenuItem(l.c_str(), new BMessage(kMsgFilter)));
+	BMessage* all = new BMessage(kMsgLanguage);
+	all->AddString("language", "");
+	langMenu->AddItem(new BMenuItem("All languages", all));
+	for (const std::string& l : languages) {
+		BMessage* msg = new BMessage(kMsgLanguage);
+		msg->AddString("language", l.c_str());
+		langMenu->AddItem(new BMenuItem(l.c_str(), msg));
+	}
 	BMenuItem* mark = langMenu->FindItem(chosen.c_str());
 	(mark ? mark : langMenu->ItemAt(0))->SetMarked(true);
 
@@ -304,6 +312,10 @@ void InstallWindow::MessageReceived(BMessage* message)
 				fModules = fInstaller.Available(Source());
 				FillList();
 			}
+			break;
+		case kMsgLanguage:
+			fLanguage = message->GetString("language", "");
+			FillList();
 			break;
 		case kMsgSelect:
 			UpdateButtons();
