@@ -12,8 +12,8 @@
 static int g_checks_failed = 0;
 
 inline void check_report(bool ok, const std::string& name, const std::string& detail = "") {
-    if (ok) std::cout << "  PASS: " << name << "\n";
-    else { std::cout << "  FAIL: " << name << (detail.empty() ? "" : ": " + detail) << "\n"; g_checks_failed++; }
+    if (ok) std::cout << "  PASS: " << name << std::endl;
+    else { std::cout << "  FAIL: " << name << (detail.empty() ? "" : ": " + detail) << std::endl; g_checks_failed++; }
 }
 template <class A, class B>
 inline void check_eq(const A& got, const B& want, const std::string& name) {
