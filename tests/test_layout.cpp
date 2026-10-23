@@ -1,399 +1,235 @@
-// test_layout.cpp — tests for sheath::Layout
-// Build: g++ -std=gnu++17 -Isrc/core -o test_layout tests/test_layout.cpp src/core/Layout.cpp src/core/Markup.cpp
-
+// Spec tests for sheath::Layout. Written by Claude; the implementation must satisfy them
+// unchanged. Fake metrics: width = 10 * size per UTF-8 code point, ascent 8 * size,
+// descent 2 * size. Default LayoutOptions unless stated: lineGap 0.25 -> 0.25 * (8 + 2) = 2.5 px.
+// Rules these numbers encode (also documented in Layout.h):
+//  - the space between a verse number and its text has size 1.0 and the text's style (10 px);
+//  - Paragraph blocks flow inline; a LineBreak block starts a new line (plus paragraphGap);
+//    a Heading block gets its own line(s) before the verse number;
+//  - a verse number is drawn kSuperscript|kSmall at size 0.7, raised by 0.4 * its ascent.
+#include "check.h"
 #include "Layout.h"
 #include "Markup.h"
-#include <iostream>
-#include <string>
+#include "Sword.h"
+#include <algorithm>
 #include <vector>
 
-static int g_pass = 0, g_fail = 0;
+using namespace sheath;
 
-#define PASS(msg) do { \
-    std::cout << "  PASS: " << (msg) << "\n"; \
-    g_pass++; \
-} while(0)
-
-#define FAIL(msg) do { \
-    std::cout << "  FAIL: " << (msg) << "\n"; \
-    g_fail++; \
-} while(0)
-
-#define CHECK(cond, msg) do { \
-    if (cond) PASS(msg); else FAIL(msg); \
-} while(0)
-
-// ---- FakeMetrics: each codepoint = 10px * size, ascent = 8*size, descent = 2*size ----
-
-struct FakeMetrics : sheath::Metrics {
-    float Width(const std::string& utf8, const sheath::TextStyle& s) const override {
-        int codepoints = 0;
-        for (size_t i = 0; i < utf8.size(); ) {
-            unsigned char c = static_cast<unsigned char>(utf8[i]);
-            if (c < 0x80) i += 1;
-            else if (c < 0xE0) i += 2;
-            else if (c < 0xF0) i += 3;
-            else i += 4;
-            codepoints++;
-        }
-        return codepoints * 10.0f * s.size;
+class FakeMetrics : public Metrics {
+public:
+    float Width(const std::string& s, const TextStyle& st) const override {
+        int cps = 0;
+        for (unsigned char c : s) if ((c & 0xC0) != 0x80) cps++;
+        return 10.0f * st.size * cps;
     }
-    float Ascent(const sheath::TextStyle& s) const override { return 8.0f * s.size; }
-    float Descent(const sheath::TextStyle& s) const override { return 2.0f * s.size; }
+    float Ascent(const TextStyle& st) const override { return 8.0f * st.size; }
+    float Descent(const TextStyle& st) const override { return 2.0f * st.size; }
 };
+static FakeMetrics M;
 
-// ---- Helpers ----
+static Block para(const std::string& text) { Block b; b.kind = Block::Paragraph; b.runs.push_back({text, 0, {}}); return b; }
+static Block heading(const std::string& text) { Block b; b.kind = Block::Heading; b.runs.push_back({text, 0, {}}); return b; }
+static LayoutVerse verse(int n, std::vector<Block> blocks) { LayoutVerse v; v.verse = n; v.blocks = std::move(blocks); return v; }
+static LayoutOptions width(float w) { LayoutOptions o; o.width = w; return o; }
 
-static sheath::LayoutVerse MakeVerse(int verseNum, const std::string& text, unsigned runStyle = 0) {
-    sheath::LayoutVerse v;
-    v.verse = verseNum;
-    sheath::Block b;
-    b.kind = sheath::Block::Paragraph;
-    sheath::Run r;
-    r.text = text;
-    r.style = runStyle;
-    b.runs.push_back(r);
-    v.blocks.push_back(b);
-    return v;
+static void check_doc_ranges(const Layout& L, const std::string& name) {
+    bool ok = true; std::string bad;
+    for (auto& line : L.Lines()) for (auto& f : line.frags)
+        if (f.docEnd < f.docStart || f.docEnd > L.Text().size() ||
+            L.Text().substr(f.docStart, f.docEnd - f.docStart) != f.text) { ok = false; bad = f.text; }
+    check_true(ok, "doc_ranges: " + name, "fragment [" + bad + "] does not match Text()");
 }
-
-static sheath::LayoutVerse MakeHeadingVerse(int verseNum, const std::string& text) {
-    sheath::LayoutVerse v;
-    v.verse = verseNum;
-    sheath::Block b;
-    b.kind = sheath::Block::Heading;
-    sheath::Run r;
-    r.text = text;
-    b.runs.push_back(r);
-    v.blocks.push_back(b);
-    return v;
+static const Fragment* fragContaining(const Layout& L, const std::string& s) {
+    for (auto& line : L.Lines()) for (auto& f : line.frags) if (f.text.find(s) != std::string::npos) return &f;
+    return nullptr;
 }
-
-// ---- Tests ----
 
 static void test_empty() {
-    std::cout << "\n--- empty ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 200;
-    layout.Build({}, opts, metrics);
-    CHECK(layout.Text().empty(), "Empty verses produce empty text");
-    CHECK(layout.Lines().empty(), "Empty verses produce no lines");
-    CHECK(layout.Height() == 0, "Empty verses have zero height");
+    Layout L; L.Build({}, width(400), M);
+    check_eq(L.Lines().size(), 0u, "empty: no lines");
+    check_near(L.Height(), 0, "empty: height 0");
+    check_eq(L.Text(), "", "empty: text");
 }
 
-static void test_single_line() {
-    std::cout << "\n--- single_line ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 400;
-
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeVerse(1, "Hello world")
-    };
-    layout.Build(verses, opts, metrics);
-
-    CHECK(layout.Lines().size() == 1, "Single line fits on one line");
-    CHECK(layout.Text().find("1 Hello world") != std::string::npos, "Text includes verse number and content");
-    CHECK(layout.Height() > 0, "Height > 0 for single line");
+static void test_single_line() {   // A
+    Layout L; L.Build({verse(1, {para("In the beginning")})}, width(400), M);
+    check_eq(L.Text(), "1 In the beginning", "single_line: Text()");
+    check_eq(L.Lines().size(), 1u, "single_line: one line");
+    if (L.Lines().size() != 1 || L.Lines()[0].frags.empty()) return;
+    const Line& ln = L.Lines()[0];
+    const Fragment& num = ln.frags[0];
+    check_eq(num.text, "1", "single_line: first frag is the number");
+    check_true(num.isVerseNumber, "single_line: number isVerseNumber");
+    check_true((num.style.style & kSuperscript) && (num.style.style & kSmall), "single_line: number style");
+    check_near(num.style.size, 0.7, "single_line: number size 0.7");
+    check_near(num.x, 0, "single_line: number x");
+    check_near(num.width, 7, "single_line: number width (1 * 10 * 0.7)");
+    check_near(num.baseline, 5.76, "single_line: number baseline (8 - 0.4 * 5.6)");
+    const Fragment* in = fragContaining(L, "In");
+    check_true(in != nullptr, "single_line: a frag contains 'In'");
+    if (in) check_near(in->x + M.Width(in->text.substr(0, in->text.find("In")), in->style), 17, "single_line: 'In' at x 17 (7 + 10)");
+    check_near(ln.top, 0, "single_line: top");
+    check_near(ln.baseline, 8, "single_line: baseline");
+    check_near(ln.bottom, 10, "single_line: bottom");
+    check_near(L.Height(), 10, "single_line: height");
+    check_doc_ranges(L, "single_line");
 }
 
-static void test_wrap() {
-    std::cout << "\n--- wrap ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 100;
+static Layout layoutB() { Layout L; L.Build({verse(0, {para("aaaa bbbb cccc")})}, width(100), M); return L; }
 
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeVerse(1, "Hello world")
-    };
-    layout.Build(verses, opts, metrics);
-
-    CHECK(layout.Lines().size() == 2, "Text wraps into two lines");
-}
-
-static void test_long_word() {
-    std::cout << "\n--- long_word ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 100;  // 10 codepoints
-
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeVerse(1, "supercalifragilistic")
-    };
-    layout.Build(verses, opts, metrics);
-
-    // All characters should be preserved (possibly broken into segments)
-    int totalChars = 0;
-    for (auto& line : layout.Lines()) {
-        for (auto& frag : line.frags) {
-            totalChars += static_cast<int>(frag.text.size());
-        }
+static void test_wrap() {   // B
+    Layout L = layoutB();
+    check_eq(L.Text(), "aaaa bbbb cccc", "wrap: Text()");
+    check_eq(L.Lines().size(), 2u, "wrap: two lines");
+    if (L.Lines().size() != 2) return;
+    const Line& l1 = L.Lines()[0]; const Line& l2 = L.Lines()[1];
+    float right = 0; for (auto& f : l1.frags) right = std::max(right, f.x + f.width);
+    check_near(right, 90, "wrap: line 1 right edge 90 ('aaaa bbbb')");
+    check_true(!l2.frags.empty() && l2.frags[0].text == "cccc", "wrap: line 2 starts with 'cccc'");
+    if (!l2.frags.empty()) {
+        check_near(l2.frags[0].x, 0, "wrap: line 2 x 0");
+        check_eq(l2.frags[0].docStart, 10u, "wrap: line 2 docStart 10");
     }
-    CHECK(totalChars > 0, "Long word characters preserved (possibly broken)");
+    check_near(l2.top, 12.5, "wrap: line 2 top (10 + 2.5)");
+    check_near(l2.baseline, 20.5, "wrap: line 2 baseline");
+    check_near(l2.bottom, 22.5, "wrap: line 2 bottom");
+    check_near(L.Height(), 22.5, "wrap: height");
+    check_doc_ranges(L, "wrap");
+}
 
-    // No fragment should exceed available width
-    for (auto& line : layout.Lines()) {
-        for (auto& frag : line.frags) {
-            CHECK(frag.width <= 100.0f + 0.1f, "No fragment exceeds available width");
-        }
+static void test_long_word() {   // C
+    Layout L; L.Build({verse(0, {para(std::string(25, 'x'))})}, width(100), M);
+    check_eq(L.Lines().size(), 3u, "long_word: three lines");
+    if (L.Lines().size() != 3) return;
+    float w[3] = {100, 100, 50}; size_t s[3] = {0, 10, 20};
+    for (int i = 0; i < 3; i++) {
+        float lw = 0; for (auto& f : L.Lines()[i].frags) lw += f.width;
+        check_near(lw, w[i], "long_word: line " + std::to_string(i + 1) + " width");
+        check_true(!L.Lines()[i].frags.empty() && L.Lines()[i].frags[0].docStart == s[i],
+                   "long_word: line " + std::to_string(i + 1) + " docStart " + std::to_string(s[i]));
     }
+    check_doc_ranges(L, "long_word");
 }
 
-static void test_utf8_break() {
-    std::cout << "\n--- utf8_break ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 100;  // 10 codepoints
+static void test_utf8_break() {   // D
+    std::string e; for (int i = 0; i < 15; i++) e += "\xC3\xA9";
+    Layout L; L.Build({verse(0, {para(e)})}, width(100), M);
+    check_eq(L.Lines().size(), 2u, "utf8_break: two lines");
+    if (L.Lines().size() == 2 && !L.Lines()[1].frags.empty())
+        check_eq(L.Lines()[1].frags[0].docStart, 20u, "utf8_break: line 2 starts at byte 20");
+    bool even = true;
+    for (auto& ln : L.Lines()) for (auto& f : ln.frags) if (f.docStart % 2 || f.docEnd % 2) even = false;
+    check_true(even, "utf8_break: all boundaries on even bytes");
+    check_doc_ranges(L, "utf8_break");
+}
 
-    // Accented characters (multi-byte UTF-8)
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeVerse(1, "cafénaïveexposé")
-    };
-    layout.Build(verses, opts, metrics);
-
-    // Count all UTF-8 codepoints in the layout
-    int totalCP = 0;
-    for (auto& line : layout.Lines()) {
-        for (auto& frag : line.frags) {
-            for (size_t i = 0; i < frag.text.size(); ) {
-                unsigned char c = static_cast<unsigned char>(frag.text[i]);
-                if (c < 0x80) i += 1;
-                else if (c < 0xE0) i += 2;
-                else if (c < 0xF0) i += 3;
-                else i += 4;
-                totalCP++;
-            }
-        }
+static void test_range_rects() {   // E
+    Layout L = layoutB();
+    auto r = L.RangeRects(5, 14, M);
+    check_eq(r.size(), 2u, "range_rects: two rects");
+    if (r.size() == 2) {
+        check_near(r[0].l, 50, "range_rects: r1 left"); check_near(r[0].t, 0, "range_rects: r1 top");
+        check_near(r[0].r, 90, "range_rects: r1 right"); check_near(r[0].b, 10, "range_rects: r1 bottom");
+        check_near(r[1].l, 0, "range_rects: r2 left"); check_near(r[1].t, 12.5, "range_rects: r2 top");
+        check_near(r[1].r, 40, "range_rects: r2 right"); check_near(r[1].b, 22.5, "range_rects: r2 bottom");
     }
-    CHECK(totalCP == 16, "All UTF-8 codepoints preserved (1 verse # + 15 word chars)");
-    CHECK(layout.Text().find("café") != std::string::npos, "café preserved in Text()");
+    check_eq(L.RangeRects(3, 3, M).size(), 0u, "range_rects: empty range");
 }
 
-static void test_verse_per_line() {
-    std::cout << "\n--- verse_per_line ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 400;
-    opts.versePerLine = true;
-
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeVerse(1, "First verse text"),
-        MakeVerse(2, "Second verse text"),
-        MakeVerse(3, "Third verse text")
-    };
-    layout.Build(verses, opts, metrics);
-
-    CHECK(layout.Lines().size() == 3, "Each verse starts on its own line");
-    CHECK(layout.Text().find("First verse text") != std::string::npos, "All verses present in text");
+static void test_offset_at() {   // F
+    Layout L = layoutB();
+    size_t o = L.OffsetAt(25, 5, M);
+    check_true(o == 2 || o == 3, "offset_at: middle of 3rd char -> 2 or 3", std::to_string(o));
+    check_eq(L.OffsetAt(-5, 15, M), 10u, "offset_at: left of line 2 -> 10");
+    check_eq(L.OffsetAt(50, -5, M), 0u, "offset_at: above -> 0");
+    check_eq(L.OffsetAt(50, 100, M), 14u, "offset_at: below -> end");
+    check_eq(L.OffsetAt(500, 5, M), 9u, "offset_at: right of line 1 -> 9");
 }
 
-static void test_heading() {
-    std::cout << "\n--- heading ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 400;
+static void test_verse_per_line() {   // G
+    LayoutOptions o = width(400); o.versePerLine = true;
+    Layout L; L.Build({verse(1, {para("a")}), verse(2, {para("b")}), verse(3, {para("c")})}, o, M);
+    check_eq(L.Text(), "1 a\n2 b\n3 c", "verse_per_line: Text()");
+    check_eq(L.Lines().size(), 3u, "verse_per_line: three lines");
+    bool nums = L.Lines().size() == 3;
+    for (auto& ln : L.Lines()) if (ln.frags.empty() || !ln.frags[0].isVerseNumber) nums = false;
+    check_true(nums, "verse_per_line: each line starts with a number");
+    auto vr = L.VerseRange(2);
+    check_true(vr.first == 4 && vr.second == 7, "verse_per_line: VerseRange(2) == {4,7}",
+               std::to_string(vr.first) + "," + std::to_string(vr.second));
+    check_near(L.VerseTop(2), 12.5, "verse_per_line: VerseTop(2)");
+    check_near(L.VerseTop(9), -1, "verse_per_line: VerseTop(9) absent");
+    check_eq(L.VerseAt(20, 15), 2, "verse_per_line: VerseAt(20,15)");
+    auto none = L.VerseRange(9);
+    check_true(none.first == 0 && none.second == 0, "verse_per_line: VerseRange(9) == {0,0}");
+    check_doc_ranges(L, "verse_per_line");
+}
 
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeHeadingVerse(0, "Chapter One"),
-        MakeVerse(1, "First verse content")
-    };
-    layout.Build(verses, opts, metrics);
+static void test_flow() {   // verses flow on one line without versePerLine
+    Layout L; L.Build({verse(1, {para("a")}), verse(2, {para("b")})}, width(400), M);
+    check_eq(L.Text(), "1 a 2 b", "flow: Text()");
+    check_eq(L.Lines().size(), 1u, "flow: one line");
+    check_doc_ranges(L, "flow");
+}
 
-    CHECK(layout.Lines().size() >= 2, "Heading and verse each get lines");
+static void test_heading() {   // H
+    Layout L; L.Build({verse(1, {heading("Title"), para("text")})}, width(400), M);
+    check_eq(L.Text(), "Title\n1 text", "heading: Text()");
+    check_eq(L.Lines().size(), 2u, "heading: two lines");
+    if (L.Lines().size() != 2 || L.Lines()[0].frags.empty() || L.Lines()[1].frags.empty()) return;
+    const Fragment& t = L.Lines()[0].frags[0];
+    check_eq(L.Lines()[0].frags.size(), 1u, "heading: line 1 has only the title");
+    check_eq(t.text, "Title", "heading: title text");
+    check_true(t.style.style & kBold, "heading: bold");
+    check_near(t.style.size, 1.25, "heading: size 1.25");
+    check_near(t.width, 62.5, "heading: width");
+    check_near(L.Lines()[0].bottom, 12.5, "heading: line 1 bottom (10 + 2.5)");
+    check_near(L.Lines()[1].top, 15, "heading: line 2 top (12.5 + 2.5)");
+    check_true(L.Lines()[1].frags[0].isVerseNumber && L.Lines()[1].frags[0].text == "1", "heading: line 2 starts with number");
+    check_doc_ranges(L, "heading");
+}
 
-    bool foundHeading = false;
-    for (auto& frag : layout.Lines()[0].frags) {
-        if (frag.text.find("Chapter") != std::string::npos) {
-            foundHeading = true;
-            break;
-        }
+static void test_line_break() {
+    Block br; br.kind = Block::LineBreak;
+    Layout L; L.Build({verse(0, {para("a"), br, para("b")})}, width(400), M);
+    check_eq(L.Lines().size(), 2u, "line_break: two lines");
+    // line 1 bottom 10, + lineGap 2.5 + paragraphGap 0.5 * 10 = 5 -> top 17.5
+    if (L.Lines().size() == 2) check_near(L.Lines()[1].top, 17.5, "line_break: line 2 top");
+    check_doc_ranges(L, "line_break");
+}
+
+static void test_link_kept() {   // J
+    Block b; b.kind = Block::Paragraph;
+    b.runs.push_back({"see ", 0, {}});
+    b.runs.push_back({"Strongs", 0, {LinkKind::Strongs, "G25"}});
+    b.runs.push_back({" here", 0, {}});
+    Layout L; L.Build({verse(0, {b})}, width(60), M);
+    bool any = false, ok = true;
+    for (auto& ln : L.Lines()) for (auto& f : ln.frags) {
+        bool inLink = f.docStart >= 4 && f.docEnd <= 11;
+        if (inLink && !f.text.empty()) { any = true; if (f.link.kind != LinkKind::Strongs || f.link.target != "G25") ok = false; }
+        if (!inLink && f.link.kind != LinkKind::None) ok = false;
     }
-    CHECK(foundHeading, "Heading text appears on first line");
+    check_true(any && ok, "link_kept: link survives wrapping, only on its own text");
+    check_doc_ranges(L, "link_kept");
 }
 
-static void test_doc_ranges() {
-    std::cout << "\n--- doc_ranges ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 400;
-
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeVerse(1, "Hello world"),
-        MakeVerse(2, "Goodbye world")
-    };
-    layout.Build(verses, opts, metrics);
-
-    const std::string& text = layout.Text();
-    size_t helloStart = text.find("Hello");
-    CHECK(helloStart != std::string::npos, "Found 'Hello' in text");
-    if (helloStart != std::string::npos) {
-        auto vr = layout.VerseRange(1);
-        CHECK(vr.first != 0 || vr.second != 0, "VerseRange(1) returns non-zero range");
-        float vt = layout.VerseTop(1);
-        CHECK(vt >= 0, "VerseTop(1) >= 0");
-    }
+static void test_real_text() {   // L
+    SwordLibrary lib(fixture_dir());
+    DisplayOptions o; o.strongs = o.morph = o.footnotes = o.crossRefs = o.headings = o.redLetter = false;
+    std::vector<LayoutVerse> vs;
+    for (auto& v : lib.Chapter("KJV", "John", 3, o)) vs.push_back(verse(v.verse, ParseXhtml(v.xhtml)));
+    Layout L; L.Build(vs, width(300), M);
+    check_true(L.Lines().size() > 36, "real_text: more than 36 lines", std::to_string(L.Lines().size()));
+    check_doc_ranges(L, "real_text");
+    auto r = L.VerseRange(16);
+    std::string v16 = L.Text().substr(r.first, r.second - r.first);
+    check_true(v16.rfind("16 For God so loved the world", 0) == 0, "real_text: verse 16 range", v16.substr(0, 40));
 }
-
-static void test_offset_at() {
-    std::cout << "\n--- offset_at ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 400;
-
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeVerse(1, "Hello world")
-    };
-    layout.Build(verses, opts, metrics);
-
-    size_t off = layout.OffsetAt(0, 9, metrics);
-    CHECK(off == 0, "OffsetAt at y=9 returns start (0)");
-
-    off = layout.OffsetAt(0, 9999, metrics);
-    CHECK(off == layout.Text().size(), "OffsetAt below text returns text size");
-
-    // FragmentAt
-    const sheath::Fragment* frag = layout.FragmentAt(5, 5);
-    if (frag) {
-        CHECK(frag->verse == 1, "FragmentAt returns fragment of verse 1");
-    } else {
-        FAIL("FragmentAt returned nullptr");
-    }
-}
-
-static void test_verse_at_range_top() {
-    std::cout << "\n--- verse_at_range_top ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 400;
-
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeVerse(1, "First verse"),
-        MakeVerse(2, "Second verse"),
-        MakeVerse(3, "Third verse")
-    };
-    layout.Build(verses, opts, metrics);
-
-    // VerseTop for each verse
-    CHECK(layout.VerseTop(1) >= 0, "VerseTop(1) >= 0");
-    CHECK(layout.VerseTop(2) >= 0, "VerseTop(2) >= 0");
-    CHECK(layout.VerseTop(999) == -1, "VerseTop(999) == -1 (non-existent)");
-
-    // VerseRange for each verse
-    auto vr1 = layout.VerseRange(1);
-    CHECK(vr1.first != 0 || vr1.second != 0, "VerseRange(1) non-zero");
-
-    auto vr999 = layout.VerseRange(999);
-    CHECK(vr999.first == 0 && vr999.second == 0, "VerseRange(999) == {0,0}");
-}
-
-static void test_range_rects() {
-    std::cout << "\n--- range_rects ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 400;
-
-    auto verses = std::vector<sheath::LayoutVerse>{
-        MakeVerse(1, "Hello world"),
-        MakeVerse(2, "Goodbye world")
-    };
-    layout.Build(verses, opts, metrics);
-
-    const std::string& text = layout.Text();
-    size_t helloStart = text.find("Hello");
-    size_t helloEnd = helloStart + 5;
-
-    auto rects = layout.RangeRects(helloStart, helloEnd, metrics);
-    CHECK(!rects.empty(), "RangeRects returns at least one rect for 'Hello'");
-    if (rects.size() == 1) {
-        CHECK(rects[0].l >= 0, "Range rect left >= 0");
-        CHECK(rects[0].r > rects[0].l, "Range rect right > left");
-        CHECK(rects[0].t >= 0, "Range rect top >= 0");
-        CHECK(rects[0].b > rects[0].t, "Range rect bottom > top");
-    }
-}
-
-static void test_link_kept() {
-    std::cout << "\n--- link_kept ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 400;
-
-    auto v = sheath::LayoutVerse{1, {}};
-    sheath::Block b;
-    b.kind = sheath::Block::Paragraph;
-    sheath::Run r;
-    r.text = "strongs_word";
-    r.link = sheath::Link{sheath::LinkKind::Strongs, "G25"};
-    b.runs.push_back(r);
-    v.blocks.push_back(b);
-
-    layout.Build({v}, opts, metrics);
-
-    bool foundLink = false;
-    for (auto& line : layout.Lines()) {
-        for (auto& frag : line.frags) {
-            if (frag.link.kind == sheath::LinkKind::Strongs && frag.link.target == "G25") {
-                foundLink = true;
-            }
-        }
-    }
-    CHECK(foundLink, "Strong's link preserved in layout fragment");
-    CHECK(layout.Text().find("strongs_word") != std::string::npos, "Link text present in layout");
-}
-
-static void test_real_text() {
-    std::cout << "\n--- real_text ---\n";
-    sheath::Layout layout;
-    FakeMetrics metrics;
-    sheath::LayoutOptions opts;
-    opts.width = 400;
-
-    // Parse a simple XHTML block
-    std::string xhtml = "<p>The <b>quick</b> brown fox</p>";
-    auto blocks = sheath::ParseXhtml(xhtml);
-
-    auto v = sheath::LayoutVerse{1, std::move(blocks)};
-    layout.Build({v}, opts, metrics);
-
-    CHECK(!layout.Lines().empty(), "Real XHTML parses into lines");
-    CHECK(layout.Text().find("quick") != std::string::npos, "Bold word 'quick' in text");
-    CHECK(layout.Text().find("brown") != std::string::npos, "Text 'brown' in text");
-}
-
-// ---- main ----
 
 int main() {
-    std::cout << "=== Sheath Layout Tests ===\n\n";
-
-    test_empty();
-    test_single_line();
-    test_wrap();
-    test_long_word();
-    test_utf8_break();
-    test_verse_per_line();
-    test_heading();
-    test_doc_ranges();
-    test_offset_at();
-    test_verse_at_range_top();
-    test_range_rects();
-    test_link_kept();
-    test_real_text();
-
-    std::cout << "\n=== Results ===\n";
-    std::cout << "TOTAL " << (g_pass + g_fail) << " PASS " << g_pass << " FAIL " << g_fail << "\n";
-
-    return g_fail > 0 ? 1 : 0;
+    test_empty(); test_single_line(); test_wrap(); test_long_word(); test_utf8_break();
+    test_range_rects(); test_offset_at(); test_verse_per_line(); test_flow(); test_heading();
+    test_line_break(); test_link_kept(); test_real_text();
+    return check_result();
 }
