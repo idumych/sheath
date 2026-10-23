@@ -1,0 +1,33 @@
+name: test
+
+# Host-side core tests against Debian trixie's libsword (= VitruvianOS 0.6's userland),
+# on amd64 and arm64. tools/ci-test.sh pushes working-tree snapshots to ci-scratch and
+# reads the result.
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container: debian:trixie
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git curl unzip g++ pkg-config python3 sqlite3 \
+            libsword-dev diatheke libsqlite3-dev
+      - uses: actions/checkout@v4
+      - name: Cache fixture modules
+        uses: actions/cache@v4
+        with:
+          path: .deps/dl
+          key: sword-fixtures-kjv-strongsgreek-v1
+      - name: Tests
+        run: sh tools/test-core.sh

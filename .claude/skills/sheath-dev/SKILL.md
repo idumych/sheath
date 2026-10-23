@@ -5,20 +5,26 @@ description: How to build, test and write code for Sheath (native Bible reader, 
 
 # Sheath development
 
-## Commands (the ONLY way to build and test)
-- `timeout 300 sh tools/test-core.sh` — builds libsword if missing, prepares fixtures, compiles and
-  runs every host test binary. Prints `PASS <name>` / `FAIL <name>: ...` lines and a last line
-  `TOTAL <n> PASS <p> FAIL <f>`; exits 1 if f > 0 or n == 0.
-- `sh tools/haiku-typecheck.sh` — type-checks src/ui against real Haiku headers (once it exists).
-- Always run test binaries with `timeout` (e.g. `timeout 60 ./.deps/test_core`). Never run a test
-  under gdb without `timeout 60 gdb -batch ...`. A hang is a bug to find, not something to wait on.
-- To find a hang: `timeout 20 gdb -batch -ex run -ex bt --args <bin>` won't stop by itself, so run
-  the binary with `timeout -s INT 10 gdb -batch -ex run -ex 'bt 15' --args <bin>` and read the stack.
-- Scratch files: .deps/tmp/. Build outputs: .deps/ (not build/, not /tmp).
-- The tests run on THIS Linux host. There is no VM in these tasks; don't try to use one.
+## Building and testing: GitHub CI only
+Nothing is compiled or run on this machine. There is no local libsword, no VM, no container.
+- `timeout 2000 sh tools/ci-test.sh` — THE way to build and test. It pushes a snapshot of your
+  working tree to CI (Debian trixie with libsword-dev, amd64 + arm64), waits (a few minutes) and
+  prints, per architecture: compiler errors, every `PASS:`/`FAIL:` line, `TOTAL n PASS p FAIL f`,
+  and the run's conclusion. Run it once per fix round, not in a loop; read the whole output.
+- Don't run g++, make, cmake, tools/test-core.sh or tools/build-sword.sh yourself; don't use git
+  (ci-test.sh does the push). Don't write anything in /tmp; scratch files go in .deps/tmp/.
+- Tests that write files must write only under scratch_dir() (tests/check.h); the fixture modules
+  are read-only.
+- Tests are written by Claude and are the spec. You may not edit any file under tests/ unless the
+  brief says so; the gate rejects the task if you do (tools/check-scope.sh).
+- To debug a failure, add a temporary `std::cerr` line in src/, run ci-test.sh, read the log
+  (`gh run view <id> --log | grep <word>`), then remove the debug line.
 
 ## libsword 1.9.0 API: use it, don't re-implement it
-Headers: .deps/sword/include/sword/. Never hand-write book tables, book-name lists or verse counts:
+Headers: /usr/include/sword/ in CI. To READ them here, use .deps/sword-1.9.0/include/ (the
+1.9.0 source; reading only, never build it). The fixture modules are in .deps/fixtures/sword
+once CI or a previous run has downloaded them; otherwise read the CrossWire conf files online.
+Never hand-write book tables, book-name lists or verse counts:
 SWORD has them for every versification (KJV, KJVA, NRSV, Catholic, Synodal, ...).
 ```cpp
 #include <versificationmgr.h>
