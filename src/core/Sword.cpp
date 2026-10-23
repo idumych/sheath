@@ -1,10 +1,13 @@
 #include "Sword.h"
 
+#include <listkey.h>
 #include <swmgr.h>
 #include <swmodule.h>
 #include <markupfiltmgr.h>
 #include <versekey.h>
 #include <versificationmgr.h>
+
+#include <regex.h>
 
 #include <algorithm>
 #include <cctype>
@@ -322,6 +325,66 @@ std::vector<std::string> SwordLibrary::Keys(const std::string& module, const std
 		if (mod->popError())
 			break;
 	}
+	return result;
+}
+
+
+SearchResult SwordLibrary::Search(const std::string& module, const std::string& query,
+	SearchMode mode, const std::string& scope, int limit)
+{
+	SearchResult result;
+	sword::SWModule* mod = d->Module(module);
+	if (mod == nullptr || query.find_first_not_of(" \t") == std::string::npos)
+		return result;
+	sword::VerseKey* key = dynamic_cast<sword::VerseKey*>(mod->createKey());
+	if (key == nullptr)
+		return result;
+
+	std::string term = query;
+	int type = -1;
+	int flags = REG_ICASE;
+	switch (mode) {
+		case SearchMode::Phrase: type = -1; break;
+		case SearchMode::AllWords: type = -2; break;
+		case SearchMode::Regex: type = 0; flags |= REG_EXTENDED; break;
+		case SearchMode::Strongs:
+			// Entry attributes Word/<n>/Lemma[.k] hold one Strong's number each; "Lemma." also
+			// matches the numbered components of words tagged with several numbers.
+			type = -3;
+			flags |= SEARCHFLAG_MATCHWHOLEENTRY;
+			term = "Word//Lemma./" + query + "/";
+			break;
+	}
+	// Strong's attributes only exist while the Strong's filter is on.
+	DisplayOptions options;
+	options.strongs = mode == SearchMode::Strongs;
+	d->SetOptions(options);
+
+	sword::ListKey scopeList;
+	sword::ListKey hits;
+	if (scope.empty()) {
+		hits = mod->search(term.c_str(), type, flags);
+	} else {
+		scopeList = key->parseVerseList(scope.c_str(), "", true);
+		if (scopeList.getCount() == 0) {
+			delete key;
+			return result;
+		}
+		hits = mod->search(term.c_str(), type, flags, &scopeList);
+	}
+
+	result.total = hits.getCount();
+	for (hits = sword::TOP; !hits.popError() && (int)result.hits.size() < limit; hits++) {
+		key->setText(hits.getText());
+		SearchHit hit;
+		hit.book = key->getOSISBookName();
+		hit.chapter = key->getChapter();
+		hit.verse = key->getVerse();
+		mod->setKey(key);
+		hit.text = mod->stripText();
+		result.hits.push_back(hit);
+	}
+	delete key;
 	return result;
 }
 
