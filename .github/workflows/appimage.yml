@@ -63,11 +63,12 @@ jobs:
           [ -S "$XDG_RUNTIME_DIR/wl-ci" ] || { echo "weston did not start:"; cat wayland-smoke/weston.log; exit 1; }
           APP=$(ls ${{ steps.app.outputs.name }}-*.AppImage)
           env -u DISPLAY WAYLAND_DISPLAY=wl-ci COSMOE_BACKEND=wayland APPIMAGE_EXTRACT_AND_RUN=1 \
-            HOME=$(mktemp -d) "./$APP" > wayland-smoke/app.log 2>&1 &
+            WAYLAND_DEBUG=client HOME=$(mktemp -d) "./$APP" > wayland-smoke/app.log 2> wayland-smoke/wayland-debug.log &
           PID=$!
           sleep 15
           if ! kill -0 $PID 2>/dev/null; then
-            echo "The app exited under Wayland:"; cat wayland-smoke/app.log; exit 1
+            wait $PID; echo "The app exited under Wayland with status $?:"
+            cat wayland-smoke/app.log; tail -40 wayland-smoke/wayland-debug.log; exit 1
           fi
           (cd wayland-smoke && WAYLAND_DISPLAY=wl-ci timeout 30 weston-screenshooter) || echo "screenshot failed"
           kill $PID; sleep 1
