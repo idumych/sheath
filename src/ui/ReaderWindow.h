@@ -14,6 +14,7 @@ class BMenuField;
 class BPopUpMenu;
 class BTextControl;
 class ChapterView;
+class SearchWindow;
 
 struct ReaderState {
 	std::string module;
@@ -61,4 +62,5 @@ private:
 	BButton* fNextButton;
 	BTextControl* fRefControl;
 	ChapterView* fText;
+	SearchWindow* fSearch;
 };

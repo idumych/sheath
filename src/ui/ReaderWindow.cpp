@@ -18,6 +18,7 @@
 #include "EntryWindow.h"
 #include "Markup.h"
 #include "Ref.h"
+#include "SearchWindow.h"
 
 using namespace sheath;
 
@@ -33,6 +34,7 @@ enum {
 	kMsgBigger = 'bigr',
 	kMsgSmaller = 'smlr',
 	kMsgToggle = 'togl',
+	kMsgSearchWindow = 'srwn',
 };
 
 const char* kOptionNames[] = {"Strong's numbers", "Footnotes", "Headings", "Words of Christ in red"};
@@ -68,6 +70,12 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	fModuleMenu = new BMenu("Bible");
 	fModuleMenu->SetRadioMode(true);
 	menuBar->AddItem(fModuleMenu);
+	BMenu* go = new BMenu("Go");
+	go->AddItem(new BMenuItem("Previous chapter", new BMessage(kMsgPrev), B_LEFT_ARROW));
+	go->AddItem(new BMenuItem("Next chapter", new BMessage(kMsgNext), B_RIGHT_ARROW));
+	go->AddSeparatorItem();
+	go->AddItem(new BMenuItem("Search" "\xE2\x80\xA6", new BMessage(kMsgSearchWindow), 'F'));
+	menuBar->AddItem(go);
 	fViewMenu = new BMenu("View");
 	fViewMenu->AddItem(new BMenuItem("Larger text", new BMessage(kMsgBigger), '+'));
 	fViewMenu->AddItem(new BMenuItem("Smaller text", new BMessage(kMsgSmaller), '-'));
@@ -103,6 +111,10 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 		.End()
 		.Add(scroll);
 
+	fSearch = new SearchWindow(fLibrary, BMessenger(this));
+	fSearch->Hide();
+	fSearch->Show();	// run its looper hidden, so Start() can be called any time
+
 	BuildModuleMenu();
 	UpdateOptionItems();
 	ShowChapter(fState.verse);
@@ -130,6 +142,8 @@ bool ReaderWindow::QuitRequested()
 		state.AddBool(kOptionNames[i], *OptionField(s.options, i));
 	state.AddRect("frame", Frame());
 	be_app->PostMessage(&state);
+	if (fSearch->Lock())
+		fSearch->Quit();
 	return true;
 }
 
@@ -285,7 +299,7 @@ void ReaderWindow::OpenLink(int32 kind, const std::string& target, int verse)
 				entry = std::string("The ") + module + " dictionary isn't installed, or has no "
 					"entry " + target + ".";
 			}
-			EntryWindow::Show(title, entry, fState.fontSize);
+			EntryWindow::Show(title, entry, fState.fontSize, target, BMessenger(this));
 			break;
 		}
 		case LinkKind::Footnote: {
@@ -371,6 +385,24 @@ void ReaderWindow::MessageReceived(BMessage* message)
 			ShowChapter(fText->VerseAtTop());
 			break;
 		}
+		case kMsgSearchWindow:
+			if (fSearch->Lock()) {
+				fSearch->Start(fState.module, fState.book);
+				fSearch->Unlock();
+			}
+			break;
+		case EntryWindow::kMsgFindStrongs:
+			if (fSearch->Lock()) {
+				fSearch->Start(fState.module, fState.book, message->GetString("strongs", ""),
+					SearchMode::Strongs);
+				fSearch->Unlock();
+			}
+			break;
+		case SearchWindow::kMsgShowVerse:
+			GoTo(message->GetString("book", "Gen"), message->GetInt32("chapter", 1),
+				message->GetInt32("verse", 0));
+			Activate();
+			break;
 		case ChapterView::kMsgLinkClicked:
 			OpenLink(message->GetInt32("kind", 0), message->GetString("target", ""),
 				message->GetInt32("verse", 0));

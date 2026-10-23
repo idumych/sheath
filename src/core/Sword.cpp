@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <strings.h>
 
 namespace sheath {
@@ -73,6 +74,7 @@ bool StartsWithNoCase(const std::string& s, const std::string& prefix)
 struct SwordLibrary::Impl {
 	std::string path;
 	sword::SWMgr* mgr = nullptr;
+	std::recursive_mutex lock;		// SWMgr isn't thread-safe; windows run on their own threads
 
 	explicit Impl(const std::string& p) : path(p) { Load(); }
 	~Impl() { delete mgr; }
@@ -134,11 +136,16 @@ struct SwordLibrary::Impl {
 SwordLibrary::SwordLibrary(const std::string& swordPath) : d(new Impl(swordPath)) {}
 SwordLibrary::~SwordLibrary() { delete d; }
 
-void SwordLibrary::Reload() { d->Load(); }
+void SwordLibrary::Reload()
+{
+	std::lock_guard<std::recursive_mutex> guard(d->lock);
+	d->Load();
+}
 
 
 std::vector<ModuleInfo> SwordLibrary::Modules() const
 {
+	std::lock_guard<std::recursive_mutex> guard(d->lock);
 	std::vector<ModuleInfo> result;
 	for (auto& entry : d->mgr->getModules()) {
 		sword::SWModule* mod = entry.second;
@@ -169,6 +176,7 @@ std::vector<ModuleInfo> SwordLibrary::Modules() const
 
 bool SwordLibrary::Find(const std::string& module, ModuleInfo* out) const
 {
+	std::lock_guard<std::recursive_mutex> guard(d->lock);
 	for (const ModuleInfo& m : Modules()) {
 		if (m.name == module) {
 			if (out)
@@ -182,6 +190,7 @@ bool SwordLibrary::Find(const std::string& module, ModuleInfo* out) const
 
 std::vector<BookInfo> SwordLibrary::Books(const std::string& module) const
 {
+	std::lock_guard<std::recursive_mutex> guard(d->lock);
 	std::vector<BookInfo> books;
 	sword::SWModule* mod = d->Module(module);
 	const sword::VersificationMgr::System* sys = mod ? d->System(mod) : nullptr;
@@ -204,6 +213,7 @@ std::vector<BookInfo> SwordLibrary::Books(const std::string& module) const
 
 int SwordLibrary::VerseCount(const std::string& module, const std::string& book, int chapter) const
 {
+	std::lock_guard<std::recursive_mutex> guard(d->lock);
 	sword::SWModule* mod = d->Module(module);
 	if (mod == nullptr)
 		return 0;
@@ -219,6 +229,7 @@ int SwordLibrary::VerseCount(const std::string& module, const std::string& book,
 std::vector<VerseText> SwordLibrary::Chapter(const std::string& module, const std::string& book,
 	int chapter, const DisplayOptions& opts)
 {
+	std::lock_guard<std::recursive_mutex> guard(d->lock);
 	std::vector<VerseText> result;
 	sword::SWModule* mod = d->Module(module);
 	if (mod == nullptr)
@@ -258,6 +269,7 @@ std::vector<VerseText> SwordLibrary::Chapter(const std::string& module, const st
 std::string SwordLibrary::Entry(const std::string& module, const std::string& key,
 	const DisplayOptions& opts)
 {
+	std::lock_guard<std::recursive_mutex> guard(d->lock);
 	sword::SWModule* mod = d->Module(module);
 	if (mod == nullptr || key.empty())
 		return "";
@@ -286,6 +298,7 @@ std::string SwordLibrary::Entry(const std::string& module, const std::string& ke
 std::vector<std::string> SwordLibrary::Keys(const std::string& module, const std::string& prefix,
 	int limit) const
 {
+	std::lock_guard<std::recursive_mutex> guard(d->lock);
 	std::vector<std::string> result;
 	sword::SWModule* mod = d->Module(module);
 	if (mod == nullptr || limit <= 0)
@@ -332,6 +345,7 @@ std::vector<std::string> SwordLibrary::Keys(const std::string& module, const std
 SearchResult SwordLibrary::Search(const std::string& module, const std::string& query,
 	SearchMode mode, const std::string& scope, int limit)
 {
+	std::lock_guard<std::recursive_mutex> guard(d->lock);
 	SearchResult result;
 	sword::SWModule* mod = d->Module(module);
 	if (mod == nullptr || query.find_first_not_of(" \t") == std::string::npos)
