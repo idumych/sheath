@@ -1,4 +1,4 @@
-#include <AboutWindow.h>
+#include <Alert.h>
 #include <Application.h>
 #include <File.h>
 #include <FindDirectory.h>
@@ -65,11 +65,10 @@ public:
 
 	void AboutRequested() override
 	{
-		BAboutWindow* about = new BAboutWindow("Sheath", kSignature);
-		about->AddDescription("A Bible reader for Haiku, built on the SWORD library from "
-			"CrossWire. Inspired by AndBible and LinBible.");
-		about->AddCopyright(2026, "Ian");
-		about->Show();
+		BAlert* about = new BAlert("About Sheath", "Sheath 0.1.0\n\n"
+			"A Bible reader built on the SWORD library from CrossWire. Inspired by AndBible "
+			"and LinBible.\n\nGPL-3.0. https://github.com/idumych/sheath", "OK");
+		about->Go(nullptr);
 	}
 
 private:
