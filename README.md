@@ -1,8 +1,8 @@
 # Sheath
 
 A Bible reader for [Renku OS](https://github.com/RenkuOS/Source), Haiku,
-[VitruvianOS](https://v-os.dev) and Linux, built on the [SWORD](https://crosswire.org/sword/)
-library. Loosely inspired by AndBible and [LinBible](https://github.com/idumych/linbible).
+[VitruvianOS](https://v-os.dev) (a BeOS-like OS based on Linux) and Linux, built on the
+[SWORD](https://crosswire.org/sword/) library. Loosely inspired by AndBible and [LinBible](https://github.com/idumych/linbible).
 
 ## Screenshots
 
@@ -40,7 +40,7 @@ library. Loosely inspired by AndBible and [LinBible](https://github.com/idumych/
 |---|---|---|
 | Renku OS, Haiku R1/beta6 (x86_64) | `sheath-<version>-1-x86_64.hpkg` | `pkgman install ./sheath-*.hpkg` |
 | VitruvianOS 0.6 (amd64, arm64) | `sheath_<version>-1_<arch>.deb` | `sudo apt install ./sheath_*_<arch>.deb` |
-| Linux x86_64 (X11 or Wayland) | `Sheath-<version>-x86_64.AppImage` | `chmod +x Sheath-*.AppImage && ./Sheath-*.AppImage` |
+| Linux x86_64, aarch64 (X11 or Wayland) | `Sheath-<version>-<arch>.AppImage` | `chmod +x Sheath-*.AppImage && ./Sheath-*.AppImage` |
 
 Packages are on the [releases page](https://github.com/idumych/sheath/releases).
 
@@ -54,8 +54,9 @@ On Haiku or Renku:
     make hpkg       # sheath-<version>-<arch>.hpkg
 
 CI builds every package: the `.hpkg` on Haiku R1/beta6 (`haiku.yml`), the VitruvianOS `.deb`s
-natively on amd64 and arm64 Debian trixie (`deb.yml`), and the AppImage with Cosmoe on Ubuntu
-24.04, smoke-tested under Wayland on a headless sway (`appimage.yml`).
+natively on amd64 and arm64 Debian trixie (`deb.yml`), and the x86_64 and aarch64 AppImages with
+Hokku (a Cosmoe fork) natively on Ubuntu 24.04, each smoke-tested under X11 (Xvfb) and Wayland
+(headless sway) (`appimage.yml`).
 
 ## Licence
 

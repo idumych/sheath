@@ -1,1 +1,1 @@
-Sheath is a Bible reader for Haiku built on the SWORD library from CrossWire. It reads any SWORD Bible module, with words of Christ in red, headings, footnotes and Strong's numbers that open their dictionary entries.
+Sheath is a Bible reader for Haiku, VitruvianOS (a BeOS-like OS based on Linux) and Linux, built on the SWORD library from CrossWire. It reads any SWORD Bible module, with words of Christ in red, headings, footnotes and Strong's numbers that open their dictionary entries.
