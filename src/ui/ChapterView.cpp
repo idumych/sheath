@@ -387,7 +387,11 @@ void ChapterView::SelectVerse(int verse)
 
 void ChapterView::ClearSelection()
 {
-	Select(0, 0);
+	// Leave the caret at the top of what's shown, not at offset 0: when the view is resized
+	// (the verse card closing), BTextView scrolls the caret into view, which sent the text back
+	// to the start of the chapter.
+	int32 top = OffsetAt(Bounds().LeftTop() + BPoint(0, 4));
+	Select(top, top);
 	if (fHighlightStart >= 0) {
 		fHighlightStart = fHighlightEnd = -1;
 		Invalidate();
@@ -589,6 +593,7 @@ void ChapterView::MouseDown(BPoint where)
 		return;
 	}
 	const LinkRange* link = (buttons & B_PRIMARY_MOUSE_BUTTON) ? LinkAt(where) : nullptr;
+	fDownVerse = 0;		// a link click is not a verse tap
 	if (link == nullptr) {
 		// A click that doesn't drag is a verse tap (MouseUp); a drag selects text.
 		fDownPoint = where;
