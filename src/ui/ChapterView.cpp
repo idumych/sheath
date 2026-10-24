@@ -329,8 +329,39 @@ void ChapterView::UpdateColumn()
 		float column = fColumnSize * 34;
 		side = std::max(16.0f, floorf((width - column) / 2));
 	}
-	if (TextRect().left != side)
-		SetInsets(side, 12, side, 12);
+	if (TextRect().left == side)
+		return;
+	SetInsets(side, 12, side, 12);
+	KeepTopVerse();
+}
+
+
+// BTextView scrolls by itself when it rewraps the text (new width or insets), which used to
+// drop the reader back to the start of the chapter. The new line breaks only exist once the
+// layout pass is over, so go back to the verse that was at the top from a message, and ignore
+// BTextView's scrolling until then.
+void ChapterView::KeepTopVerse()
+{
+	if (fTopVerse <= 0 || fKeepPending || Window() == nullptr)
+		return;
+	fKeepPending = true;
+	Window()->PostMessage(kMsgKeepTop, this);
+}
+
+
+void ChapterView::MessageReceived(BMessage* message)
+{
+	if (message->what != kMsgKeepTop) {
+		BTextView::MessageReceived(message);
+		return;
+	}
+	fKeepPending = false;
+	if (fTopVerse <= 0)
+		return;
+	bool syncing = fSyncing;
+	fSyncing = true;	// not the reader scrolling, so the parallel view doesn't follow
+	ScrollToVerse(fTopVerse);
+	fSyncing = syncing;
 }
 
 
@@ -393,6 +424,7 @@ void ChapterView::Render(RunBuilder& builder)
 	builder.ApplyTo(this);
 	ScrollToOffset(0);
 	fLastTopVerse = VerseAtTop();
+	fTopVerse = 0;
 	fSyncing = false;
 }
 
@@ -429,6 +461,7 @@ void ChapterView::ScrollToVerse(int verse)
 			// Scroll so the line holding the verse number is the first one shown.
 			BPoint p = PointAt(OffsetAt(LineAt(v.offset)));
 			ScrollTo(0, p.y > 4 ? p.y - 4 : 0);
+			fTopVerse = verse;
 			return;
 		}
 	}
@@ -456,8 +489,12 @@ BSize ChapterView::MinSize()
 
 void ChapterView::FrameResized(float width, float height)
 {
+	bool rewrap = width != fTopWidth;
+	fTopWidth = width;
 	BTextView::FrameResized(width, height);
 	UpdateColumn();
+	if (rewrap)
+		KeepTopVerse();
 	if (fRestoreVerse > 0 && Window() != nullptr && !Window()->IsHidden()) {
 		ScrollToVerse(fRestoreVerse);
 		fRestoreVerse = 0;
@@ -477,6 +514,12 @@ void ChapterView::SyncToVerse(int verse)
 void ChapterView::ScrollTo(BPoint where)
 {
 	BTextView::ScrollTo(where);
+	// Scrolls before FrameResized() for a new width, or before KeepTopVerse() is done, are
+	// BTextView's own.
+	if (fKeepPending || Bounds().Width() != fTopWidth)
+		return;
+	if (!fVerses.empty())
+		fTopVerse = Bounds().top > 0 ? VerseAtTop() : 0;	// 0: the chapter's heading shows
 	if (!fNotify || fSyncing || Window() == nullptr || fVerses.empty())
 		return;
 	int verse = VerseAtTop();

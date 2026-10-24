@@ -27,6 +27,7 @@ public:
 	static const uint32 kMsgVerseMenu = 'vrsm';
 	static const uint32 kMsgScrolled = 'scrl';	// "verse" now at the top, "view" (pointer)
 	static const uint32 kMsgVerseTapped = 'vtap';	// a click on a verse: "verse", "view"
+	static const uint32 kMsgKeepTop = 'kpto';		// internal: see KeepTopVerse()
 
 	explicit ChapterView(const char* name);
 
@@ -48,6 +49,7 @@ public:
 	// before the window is shown, line breaks are for the wrong width).
 	void RestoreVerse(int verse);
 	void FrameResized(float width, float height) override;
+	void MessageReceived(BMessage* message) override;
 	BSize MinSize() override;
 	void SetScrollNotify(bool notify) { fNotify = notify; }
 
@@ -80,10 +82,14 @@ private:
 	bool fSyncing = false;
 	int fLastTopVerse = 0;
 	int fRestoreVerse = 0;
+	int fTopVerse = 0;			// the verse at the top, kept when the text rewraps
+	float fTopWidth = -1;		// the width fTopVerse was seen at
+	bool fKeepPending = false;	// a kMsgKeepTop is on its way
 	bool fCentered = false;		// chapters sit in a centred column; entries don't
 	float fColumnSize = 16;		// the text size the column width follows
 	BPoint fDownPoint;
 	int fDownVerse = 0;
 
 	void UpdateColumn();
+	void KeepTopVerse();
 };
