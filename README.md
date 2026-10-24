@@ -6,30 +6,33 @@ library. Loosely inspired by AndBible and [LinBible](https://github.com/idumych/
 
 ## Screenshots
 
-![Sheath on Haiku R1/beta6: John 3 in the KJV, words of Christ in red](docs/screenshots/haiku-reading.png)
+![Sheath on Haiku R1/beta6: John 3:16 in the KJV with Strong's numbers and the verse card](docs/screenshots/haiku-verse-card.png)
 
-*Haiku R1/beta6: John 3 in the KJV, with the words of Christ in red.*
+*Haiku R1/beta6: John 3:16 in the KJV with Strong's numbers; clicking the verse opens its card.*
 
-![Sheath on VitruvianOS: the KJV and ASV side by side](docs/screenshots/vitruvian-parallel.png)
+![Sheath on VitruvianOS: an exact-phrase search for "only begotten"](docs/screenshots/vitruvian-search.png)
 
-*VitruvianOS 0.6: the KJV and the ASV side by side, scrolled together verse by verse.*
+*VitruvianOS 0.6: searching the KJV for the exact phrase "only begotten" finds six verses.*
 
-![Sheath on Linux: John 1 with Strong's numbers and the entry for logos](docs/screenshots/linux-strongs.png)
+![Sheath on Linux: the ASV and KJV side by side at John 3:16](docs/screenshots/linux-parallel.png)
 
-*Linux (X11; Wayland works too): John 1 with Strong's numbers; clicking 3056 opens λόγος.*
+*Linux (X11; Wayland works too): the ASV and the KJV side by side, scrolled together.*
 
 ## Features
 
-- Downloads Bibles, commentaries and dictionaries from CrossWire (Bible ▸ Install modules…)
+- A LinBible-style window: back and forward through where you've been, a Bible chooser, book
+  and chapter, a Go to field ("jn 3:16", "Psalm 23"), and Search, Bookmarks and Download buttons
+- Click a verse for its card: Bookmark, Note, Copy (with the reference), Compare (the verse in
+  every installed Bible) and Definition & Morphology (each word's Strong's entry and parsing)
+- Downloads Bibles, commentaries and dictionaries from CrossWire (Library ▸ Download modules…)
 - Any SWORD Bible module, in its own versification
 - Words of Christ in red, headings, footnotes
 - Strong's numbers that open the Greek or Hebrew dictionary entry, and find every verse with it
 - Search by words, exact phrase or regular expression, in the whole Bible, a testament or a book
 - A second Bible side by side, scrolled together verse by verse
-- Bookmarks; copy a verse with its reference (right-click a verse)
-- Go to a reference by typing it ("jn 3:16", "Psalm 23")
-- Import MyBible modules (.SQLite3) as SWORD modules (Bible ▸ Import MyBible module…)
-- Noto Serif by default; any installed font, line spacing, one verse per line or paragraphs
+- Import MyBible modules (.SQLite3) as SWORD modules (Library ▸ Import MyBible module…)
+- Noto Serif in a centred reading column; any installed font, line spacing, one verse per line
+  or paragraphs
 
 ## Install
 
@@ -52,7 +55,7 @@ On Haiku or Renku:
 
 CI builds every package: the `.hpkg` on Haiku R1/beta6 (`haiku.yml`), the VitruvianOS `.deb`s
 natively on amd64 and arm64 Debian trixie (`deb.yml`), and the AppImage with Cosmoe on Ubuntu
-24.04, smoke-tested under Wayland on a headless Weston (`appimage.yml`).
+24.04, smoke-tested under Wayland on a headless sway (`appimage.yml`).
 
 ## Licence
 
