@@ -5,6 +5,7 @@
 #include <swconfig.h>
 #include <filemgr.h>
 #include <remotetrans.h>
+#include <swversion.h>
 #include <swmodule.h>
 
 #include <algorithm>
@@ -22,7 +23,8 @@ public:
 
 	bool isUserDisclaimerConfirmed() const override { return true; }
 
-	// SWORD (1.8.1 and 1.9.0) never initializes RemoteTransport::timeoutMillis and only sets it
+#if SWORD_VERSION_MAJOR > 1 || (SWORD_VERSION_MAJOR == 1 && SWORD_VERSION_MINOR >= 9)
+	// SWORD 1.9 never initializes RemoteTransport::timeoutMillis and only sets it
 	// for FTP sources, so HTTP(S) downloads ran with whatever was in memory: 0 or a huge value
 	// worked, 48 failed every transfer ("code -9") and others let a stalled connection hang.
 	sword::RemoteTransport* createHTTPTransport(const char* host,
@@ -36,6 +38,8 @@ public:
 	}
 
 	static const long kTimeoutMillis = 30000;
+#endif
+	// (SWORD 1.8.1, on Haiku, has no transport timeout at all, so nothing to fix there.)
 };
 
 } // anonymous namespace
