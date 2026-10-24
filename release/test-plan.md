@@ -14,15 +14,15 @@ Haiku / Renku: delete `~/config/settings/Sheath_settings`, `~/config/settings/Sh
 ## Feature checks
 
 ### install-module
-Steps: launch with fresh state. The window says "No Bible is installed yet". Open the "Bible"
-menu, choose "Install modules…". Press "Refresh list", confirm "Download". In the language
+Steps: launch with fresh state. The window says "No Bible is installed yet". Open the "Library"
+menu, choose "Download modules…" (or press "Download" on the toolbar). Press "Refresh list", confirm "Download". In the language
 menu choose "en", type "KJV" in the filter field, select the line starting "KJV —", press
 "Install". Close the Modules window.
 PASS when: the Modules window status reads "KJV installed." and the reader window shows
 Genesis or John text with "KJV" in the window title.
 
 ### read-chapter
-Steps: type "jn 3:16" in the reference field at the top right and press Enter.
+Steps: type "jn 3:16" in the "Go to…" field on the toolbar and press Enter.
 PASS when: OCR of the window shows "For God so loved the world" and the title contains "John 3".
 
 ### strongs-lookup
@@ -31,7 +31,7 @@ install-module. Click the small blue number after "loved" in John 3:16 (it reads
 PASS when: a window titled "Strong's G25" opens and shows "agapao".
 
 ### search
-Steps: Go menu, "Search…", type "only begotten", choose "Exact phrase", press "Search".
+Steps: Search menu, "Search…" (or the "Search" toolbar button), type "only begotten", choose "Exact phrase", press "Search".
 PASS when: the status line reads "6 verses." and the list contains "John 3:16".
 
 ### bookmark

@@ -3,6 +3,7 @@
 #include <Clipboard.h>
 #include <Cursor.h>
 #include <Font.h>
+#include <LayoutUtils.h>
 #include <Looper.h>
 #include <Message.h>
 #include <Region.h>
@@ -438,6 +439,23 @@ void ChapterView::RestoreVerse(int verse)
 {
 	fRestoreVerse = verse;
 	ScrollToVerse(verse);
+}
+
+
+// BTextView counts the insets in its size hints, and UpdateColumn() widens the insets as the
+// view widens, so the hints grew with every layout pass: turning on the parallel pane made
+// the window tens of thousands of pixels wide. These hints don't depend on the insets.
+BSize ChapterView::MinSize()
+{
+	return BLayoutUtils::ComposeSize(ExplicitMinSize(),
+		BSize(fColumnSize * 8 + 32, fColumnSize * 2 + 24));
+}
+
+
+BSize ChapterView::PreferredSize()
+{
+	return BLayoutUtils::ComposeSize(ExplicitPreferredSize(),
+		BSize(fColumnSize * 34 + 32, fColumnSize * 20));
 }
 
 

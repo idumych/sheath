@@ -48,6 +48,8 @@ public:
 	// before the window is shown, line breaks are for the wrong width).
 	void RestoreVerse(int verse);
 	void FrameResized(float width, float height) override;
+	BSize MinSize() override;
+	BSize PreferredSize() override;
 	void SetScrollNotify(bool notify) { fNotify = notify; }
 
 	using BTextView::ScrollTo;

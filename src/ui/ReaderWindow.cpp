@@ -20,6 +20,7 @@
 #include <StringView.h>
 #include <TextView.h>
 
+#include <algorithm>
 #include <cmath>
 #include <thread>
 #include <cstdio>
@@ -275,6 +276,11 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	close->AddString("module", "");
 	fHeader2 = new PaneHeader("header2", new BMessage(kMsgSync), close);
 	fHeader2->SetSync(true);
+	// The same band height on both panes (Sync and ✕ make the second one taller), so the two
+	// texts start level.
+	float band = std::max(fHeader->MinSize().height, fHeader2->MinSize().height);
+	fHeader->SetExplicitMinSize(BSize(B_SIZE_UNSET, band));
+	fHeader2->SetExplicitMinSize(BSize(B_SIZE_UNSET, band));
 	fText2 = new ChapterView("parallel");
 	BScrollView* scroll2 = new BScrollView("scroll2", fText2, 0, false, true, B_NO_BORDER);
 	BGroupView* pane = new BGroupView(B_VERTICAL, 0);
