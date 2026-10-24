@@ -442,20 +442,15 @@ void ChapterView::RestoreVerse(int verse)
 }
 
 
-// BTextView counts the insets in its size hints, and UpdateColumn() widens the insets as the
-// view widens, so the hints grew with every layout pass: turning on the parallel pane made
-// the window tens of thousands of pixels wide. These hints don't depend on the insets.
+// BTextView counts the insets in its minimum size, and UpdateColumn() widens the insets as
+// the view widens, so the minimum grew with every layout pass: turning on the parallel pane
+// made the window tens of thousands of pixels wide. This minimum doesn't depend on the insets.
+// (PreferredSize() stays BTextView's: replacing it made the view jump to the top whenever the
+// verse card resized it.)
 BSize ChapterView::MinSize()
 {
 	return BLayoutUtils::ComposeSize(ExplicitMinSize(),
 		BSize(fColumnSize * 8 + 32, fColumnSize * 2 + 24));
-}
-
-
-BSize ChapterView::PreferredSize()
-{
-	return BLayoutUtils::ComposeSize(ExplicitPreferredSize(),
-		BSize(fColumnSize * 34 + 32, fColumnSize * 20));
 }
 
 
