@@ -6,6 +6,7 @@
 #include <ScrollView.h>
 
 #include "ChapterView.h"
+#include "Widgets.h"
 
 #include <algorithm>
 
@@ -24,7 +25,7 @@ EntryWindow::EntryWindow()
 		.Add(scroll)
 		.AddGroup(B_HORIZONTAL)
 			.SetInsets(B_USE_HALF_ITEM_INSETS)
-			.AddGlue()
+			.Add(HorizontalGlue())	// the row takes no height while Find is hidden
 			.Add(fFind)
 		.End();
 	CenterOnScreen();

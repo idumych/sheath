@@ -304,9 +304,9 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 		.End()
 		.Add(split)
 		.AddGroup(B_HORIZONTAL, 0)
-			.AddGlue()
+			.Add(HorizontalGlue())	// the hidden card's row takes no height
 			.Add(fVerseMenu, 2.0f)
-			.AddGlue()
+			.Add(HorizontalGlue())
 		.End();
 	fPane2->Hide();
 	fVerseMenu->Hide();

@@ -5,10 +5,17 @@
 #include <LayoutBuilder.h>
 #include <Looper.h>
 #include <Message.h>
+#include <SpaceLayoutItem.h>
 #include <StringView.h>
 #include <Window.h>
 
 #include <algorithm>
+
+BLayoutItem* HorizontalGlue()
+{
+	return new BSpaceLayoutItem(BSize(0, 0), BSize(B_SIZE_UNLIMITED, 0), BSize(0, 0),
+		BAlignment(B_ALIGN_USE_FULL_WIDTH, B_ALIGN_USE_FULL_HEIGHT));
+}
 
 // #pragma mark - HintField
 

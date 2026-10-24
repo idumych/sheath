@@ -6,8 +6,13 @@
 #include <string>
 
 class BButton;
+class BLayoutItem;
 class BCheckBox;
 class BStringView;
+
+// Glue that grows only horizontally. AddGlue() grows vertically too, so a row holding only
+// glue (its other views hidden) takes as much height as the window's main view.
+BLayoutItem* HorizontalGlue();
 
 // A one-line text field that shows a grey hint ("Go to… (e.g. John 3:16)") while it is empty
 // and unfocused, and sends its message when Enter is pressed. Put it in a BScrollView for
