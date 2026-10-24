@@ -1,6 +1,6 @@
 #!/bin/sh
 # build-appimage.sh — the app for any x86_64 Linux desktop, as an AppImage,
-# using Cosmoe (https://github.com/haydentech/cosmoe), the Haiku API as a
+# using Cosmoe (https://github.com/haydentech/cosmoe, or a fork), the Haiku API as a
 # library on X11 and Wayland. Generic haiku-* template: app-specific values
 # come from haiku-app.env.
 #
@@ -16,7 +16,11 @@ cd "$(dirname "$0")/../.."
 ROOT=$(pwd)
 . ./haiku-app.env
 
-COSMOE_TAG=v0.9.0_20261013
+# Which Cosmoe to build: upstream, or a fork such as idumych/kireji (fixes for tooltips, font
+# styles and app-wide pointer events). haiku-app.env may set COSMOE_REPO (owner/name on
+# GitHub) and COSMOE_TAG (a tag or branch).
+COSMOE_REPO=${COSMOE_REPO:-haydentech/cosmoe}
+COSMOE_TAG=${COSMOE_TAG:-v0.9.0_20261013}
 LINUXDEPLOY_TAG=1-alpha-20251107-1
 APPIMAGETOOL_TAG=1.9.1
 ARCH=x86_64
@@ -30,7 +34,7 @@ if [ -z "${COSMOE_STAGE:-}" ]; then
 	COSMOE_STAGE="$WORK/stage"
 	if [ ! -f "$COSMOE_STAGE/usr/lib/libbe.so" ]; then
 		[ -d "$WORK/src" ] || git clone --depth 1 --branch "$COSMOE_TAG" \
-			https://github.com/haydentech/cosmoe.git "$WORK/src"
+			"https://github.com/$COSMOE_REPO.git" "$WORK/src"
 		meson setup "$WORK/build" "$WORK/src" --prefix=/usr --libdir=lib \
 			--buildtype=release -Denable_unit_test_compile=false
 		ninja -C "$WORK/build"
@@ -74,7 +78,7 @@ done
 cp packaging/appimage/fonts.conf "$APPDIR/etc/fonts/fonts.conf"
 cp LICENSE "$DOC/LICENSE"
 cp "$WORK/src/License.md" "$DOC/COSMOE-LICENSE.md" 2>/dev/null \
-	|| curl -fsSL "https://raw.githubusercontent.com/haydentech/cosmoe/$COSMOE_TAG/License.md" \
+	|| curl -fsSL "https://raw.githubusercontent.com/$COSMOE_REPO/$COSMOE_TAG/License.md" \
 		-o "$DOC/COSMOE-LICENSE.md"
 find "$APPDIR/usr/lib" -name '*.so' -exec strip --strip-unneeded {} \;
 

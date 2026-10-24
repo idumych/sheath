@@ -4,6 +4,7 @@
 #include <swmgr.h>
 #include <swconfig.h>
 #include <filemgr.h>
+#include <remotetrans.h>
 #include <swmodule.h>
 
 #include <algorithm>
@@ -20,6 +21,21 @@ public:
 		: sword::InstallMgr(privatePath, sr) {}
 
 	bool isUserDisclaimerConfirmed() const override { return true; }
+
+	// SWORD (1.8.1 and 1.9.0) never initializes RemoteTransport::timeoutMillis and only sets it
+	// for FTP sources, so HTTP(S) downloads ran with whatever was in memory: 0 or a huge value
+	// worked, 48 failed every transfer ("code -9") and others let a stalled connection hang.
+	sword::RemoteTransport* createHTTPTransport(const char* host,
+		sword::StatusReporter* statusReporter) override
+	{
+		sword::RemoteTransport* transport = sword::InstallMgr::createHTTPTransport(host,
+			statusReporter);
+		if (transport != nullptr)
+			transport->setTimeoutMillis(kTimeoutMillis);
+		return transport;
+	}
+
+	static const long kTimeoutMillis = 30000;
 };
 
 } // anonymous namespace

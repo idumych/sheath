@@ -63,22 +63,9 @@ public:
 	{
 		BFont font(be_plain_font);
 		if (!style.family.empty())
-			SetStyle(font, style.family.c_str(), 0);
+			font.SetFamilyAndFace(style.family.c_str(), B_REGULAR_FACE);
 		font.SetSize(style.size);
 		return font;
-	}
-
-	// Picks the family's style by name. Cosmoe (Linux) maps face flags onto installed styles
-	// unreliably (B_REGULAR_FACE can land on "Thin", B_ITALIC_FACE on nothing), so ask for
-	// "Regular", "Bold", "Italic" or "Bold Italic" first and fall back to the face flags.
-	static void SetStyle(BFont& font, const char* family, uint16 face)
-	{
-		bool bold = face & B_BOLD_FACE, italic = face & B_ITALIC_FACE;
-		const char* style = bold && italic ? "Bold Italic" : bold ? "Bold" : italic ? "Italic"
-			: "Regular";
-		if (font.SetFamilyAndStyle(family, style) == B_OK)
-			return;
-		font.SetFamilyAndFace(family, face == 0 ? B_REGULAR_FACE : face);
 	}
 
 	int32 Length() const { return (int32)fText.size(); }
@@ -127,12 +114,8 @@ public:
 		if (run.style & kDivineName)
 			size = fStyle.size * 0.85f;
 		font.SetSize(size);
-		if (face != 0) {
-			font_family family;
-			font_style current;
-			fBase.GetFamilyAndStyle(&family, &current);
-			SetStyle(font, family, face);
-		}
+		if (face != 0)
+			font.SetFace(face);
 
 		rgb_color color = inHeading ? kHeading : kText;
 		if (run.style & kRedLetter)
@@ -349,6 +332,23 @@ void ChapterView::ScrollToVerse(int verse)
 			ScrollTo(0, p.y > 4 ? p.y - 4 : 0);
 			return;
 		}
+	}
+}
+
+
+void ChapterView::RestoreVerse(int verse)
+{
+	fRestoreVerse = verse;
+	ScrollToVerse(verse);
+}
+
+
+void ChapterView::FrameResized(float width, float height)
+{
+	BTextView::FrameResized(width, height);
+	if (fRestoreVerse > 0 && Window() != nullptr && !Window()->IsHidden()) {
+		ScrollToVerse(fRestoreVerse);
+		fRestoreVerse = 0;
 	}
 }
 

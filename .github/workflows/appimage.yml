@@ -25,7 +25,10 @@ jobs:
           . ./haiku-app.env
           echo "name=$APP_NAME" >> "$GITHUB_OUTPUT"
           echo "apt=$APPIMAGE_APT_EXTRA" >> "$GITHUB_OUTPUT"
-          echo "cosmoe=$(sed -n 's/^COSMOE_TAG=//p' packaging/appimage/build-appimage.sh)" >> "$GITHUB_OUTPUT"
+          # Cache Cosmoe by the commit it builds, so a fork's branch that moves rebuilds.
+          REPO=${COSMOE_REPO:-haydentech/cosmoe}
+          TAG=${COSMOE_TAG:-$(sed -n 's/^COSMOE_TAG=\${COSMOE_TAG:-\(.*\)}$/\1/p' packaging/appimage/build-appimage.sh)}
+          echo "cosmoe=$(echo $REPO | tr / -)-$(git ls-remote https://github.com/$REPO.git "$TAG" | cut -c1-12)" >> "$GITHUB_OUTPUT"
 
       - name: Install build dependencies
         run: |

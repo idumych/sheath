@@ -40,6 +40,10 @@ public:
 
 	void ScrollToVerse(int verse);
 	void SyncToVerse(int verse);		// ScrollToVerse without sending kMsgScrolled
+	// Scrolls to the verse once the view has its final size (the saved position at launch:
+	// before the window is shown, line breaks are for the wrong width).
+	void RestoreVerse(int verse);
+	void FrameResized(float width, float height) override;
 	void SetScrollNotify(bool notify) { fNotify = notify; }
 
 	using BTextView::ScrollTo;
@@ -65,4 +69,5 @@ private:
 	bool fNotify = false;
 	bool fSyncing = false;
 	int fLastTopVerse = 0;
+	int fRestoreVerse = 0;
 };
