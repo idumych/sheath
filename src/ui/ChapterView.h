@@ -50,6 +50,7 @@ public:
 	void RestoreVerse(int verse);
 	void FrameResized(float width, float height) override;
 	void MessageReceived(BMessage* message) override;
+	void KeyDown(const char* bytes, int32 numBytes) override;
 	BSize MinSize() override;
 	void SetScrollNotify(bool notify) { fNotify = notify; }
 
@@ -83,7 +84,8 @@ private:
 	int fLastTopVerse = 0;
 	int fRestoreVerse = 0;
 	int fTopVerse = 0;			// the verse at the top, kept when the text rewraps
-	float fTopWidth = -1;		// the width fTopVerse was seen at
+	float fTopWidth = -1;		// the size fTopVerse was seen at
+	float fTopHeight = -1;
 	bool fKeepPending = false;	// a kMsgKeepTop is on its way
 	bool fCentered = false;		// chapters sit in a centred column; entries don't
 	float fColumnSize = 16;		// the text size the column width follows

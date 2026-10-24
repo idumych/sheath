@@ -336,16 +336,40 @@ void ChapterView::UpdateColumn()
 }
 
 
-// BTextView scrolls by itself when it rewraps the text (new width or insets), which used to
-// drop the reader back to the start of the chapter. The new line breaks only exist once the
-// layout pass is over, so go back to the verse that was at the top from a message, and ignore
-// BTextView's scrolling until then.
+// BTextView scrolls by itself when it rewraps the text (new width or insets) or is resized
+// (the verse card, the parallel pane), which used to move the reader away from their verse.
+// The new line breaks only exist once the layout pass is over, so go back to the verse that
+// was at the top from a message, and ignore BTextView's scrolling until then.
 void ChapterView::KeepTopVerse()
 {
 	if (fTopVerse <= 0 || fKeepPending || Window() == nullptr)
 		return;
 	fKeepPending = true;
 	Window()->PostMessage(kMsgKeepTop, this);
+}
+
+
+// The reading keys scroll from what is shown. BTextView moves the caret and scrolls to it,
+// and the caret stays wherever the last click left it, so Page Down could go backwards.
+void ChapterView::KeyDown(const char* bytes, int32 numBytes)
+{
+	float line = fColumnSize * 1.5f;
+	float page = std::max(line, Bounds().Height() - line);
+	float bottom = std::max(0.0f, TextRect().bottom + 12 - Bounds().Height());
+	float y = Bounds().top;
+	switch (numBytes == 1 ? bytes[0] : 0) {
+		case B_PAGE_DOWN:	y += page; break;
+		case B_PAGE_UP:		y -= page; break;
+		case B_DOWN_ARROW:	y += line; break;
+		case B_UP_ARROW:	y -= line; break;
+		case B_HOME:		y = 0; break;
+		case B_END:			y = bottom; break;
+		case B_SPACE:		y += page; break;
+		default:
+			BTextView::KeyDown(bytes, numBytes);
+			return;
+	}
+	ScrollTo(0, std::min(std::max(y, 0.0f), bottom));
 }
 
 
@@ -376,7 +400,14 @@ void ChapterView::SelectVerse(int verse)
 		const char* text = Text();
 		while (end > start && (text[end - 1] == '\n' || text[end - 1] == ' '))
 			end--;
-		Select(start, start);
+		// Clear a text selection but leave the caret where it is, at the top of the view:
+		// BTextView scrolls to the caret when the verse card resizes the view.
+		int32 selStart, selEnd;
+		GetSelection(&selStart, &selEnd);
+		if (selStart != selEnd) {
+			int32 top = OffsetAt(Bounds().LeftTop() + BPoint(0, 4));
+			Select(top, top);
+		}
 		fHighlightStart = start;
 		fHighlightEnd = end;
 		Invalidate();
@@ -389,9 +420,14 @@ void ChapterView::ClearSelection()
 {
 	// Leave the caret at the top of what's shown, not at offset 0: when the view is resized
 	// (the verse card closing), BTextView scrolls the caret into view, which sent the text back
-	// to the start of the chapter.
-	int32 top = OffsetAt(Bounds().LeftTop() + BPoint(0, 4));
-	Select(top, top);
+	// to the start of the chapter. A view with nothing selected (the hidden parallel pane) is
+	// left alone: moving its caret made the AppImage jump the main text to the top.
+	int32 start, end;
+	GetSelection(&start, &end);
+	if (start != end || fHighlightStart >= 0) {
+		int32 top = OffsetAt(Bounds().LeftTop() + BPoint(0, 4));
+		Select(top, top);
+	}
 	if (fHighlightStart >= 0) {
 		fHighlightStart = fHighlightEnd = -1;
 		Invalidate();
@@ -493,11 +529,12 @@ BSize ChapterView::MinSize()
 
 void ChapterView::FrameResized(float width, float height)
 {
-	bool rewrap = width != fTopWidth;
+	bool resized = width != fTopWidth || height != fTopHeight;
 	fTopWidth = width;
+	fTopHeight = height;
 	BTextView::FrameResized(width, height);
 	UpdateColumn();
-	if (rewrap)
+	if (resized)
 		KeepTopVerse();
 	if (fRestoreVerse > 0 && Window() != nullptr && !Window()->IsHidden()) {
 		ScrollToVerse(fRestoreVerse);
@@ -518,9 +555,10 @@ void ChapterView::SyncToVerse(int verse)
 void ChapterView::ScrollTo(BPoint where)
 {
 	BTextView::ScrollTo(where);
-	// Scrolls before FrameResized() for a new width, or before KeepTopVerse() is done, are
-	// BTextView's own.
-	if (fKeepPending || Bounds().Width() != fTopWidth)
+	// Scrolls before FrameResized() for a new size (BTextView rewraps, or keeps the caret in
+	// view, when the verse card or the parallel pane resizes it), or before KeepTopVerse() is
+	// done, are BTextView's own: not recorded, and not passed to the parallel view.
+	if (fKeepPending || Bounds().Width() != fTopWidth || Bounds().Height() != fTopHeight)
 		return;
 	if (!fVerses.empty())
 		fTopVerse = Bounds().top > 0 ? VerseAtTop() : 0;	// 0: the chapter's heading shows
