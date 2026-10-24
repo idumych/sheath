@@ -1,6 +1,6 @@
 name: appimage
 
-# The app for any x86_64 Linux desktop, built with Kireji (Cosmoe fork) on Ubuntu 24.04 so
+# The app for any x86_64 Linux desktop, built with Hokku (Cosmoe fork) on Ubuntu 24.04 so
 # the AppImage runs on that glibc or newer. Run it by hand before a release
 # (gh workflow run appimage.yml --ref <branch>) and test that artifact; on a
 # v* tag it attaches an AppImage to the release only if none is attached yet,
@@ -25,7 +25,7 @@ jobs:
           . ./haiku-app.env
           echo "name=$APP_NAME" >> "$GITHUB_OUTPUT"
           echo "apt=$APPIMAGE_APT_EXTRA" >> "$GITHUB_OUTPUT"
-          # Cache Kireji by the commit it builds, so a branch that moves rebuilds.
+          # Cache Hokku by the commit it builds, so a branch that moves rebuilds.
           REPO=${COSMOE_REPO:-$(sed -n 's/^COSMOE_REPO=\${COSMOE_REPO:-\(.*\)}$/\1/p' packaging/appimage/build-appimage.sh)}
           TAG=${COSMOE_TAG:-$(sed -n 's/^COSMOE_TAG=\${COSMOE_TAG:-\(.*\)}$/\1/p' packaging/appimage/build-appimage.sh)}
           echo "cosmoe=$(echo $REPO | tr / -)-$(git ls-remote https://github.com/$REPO.git "$TAG" | cut -c1-12)" >> "$GITHUB_OUTPUT"

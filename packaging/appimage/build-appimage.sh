@@ -1,6 +1,6 @@
 #!/bin/sh
 # build-appimage.sh — the app for any x86_64 Linux desktop, as an AppImage,
-# using Kireji (https://github.com/idumych/kireji, a fork of Cosmoe), the Haiku API as a
+# using Hokku (https://github.com/idumych/hokku, a fork of Cosmoe), the Haiku API as a
 # library on X11 and Wayland. Generic haiku-* template: app-specific values
 # come from haiku-app.env.
 #
@@ -8,7 +8,7 @@
 #
 # Run it in CI (.github/workflows/appimage.yml, Ubuntu 24.04), not on a
 # rolling-release host: the AppImage needs the oldest glibc it should run on.
-# Builds Kireji into .cosmoe/ (unless COSMOE_STAGE points
+# Builds Hokku into .cosmoe/ (unless COSMOE_STAGE points
 # at a DESTDIR install of it made with --prefix=/usr --libdir=lib), builds
 # the app against it, bundles both with linuxdeploy, packs with appimagetool.
 set -eu
@@ -16,11 +16,11 @@ cd "$(dirname "$0")/../.."
 ROOT=$(pwd)
 . ./haiku-app.env
 
-# Which Cosmoe to build: Kireji, the fork with fixes for freestanding Haiku/Renku app ports
+# Which Cosmoe to build: Hokku, the fork with fixes for freestanding Haiku/Renku app ports
 # (pointer events, tooltips, font styles). haiku-app.env may override COSMOE_REPO (owner/name
 # on GitHub) and COSMOE_TAG (a tag or branch), e.g. to try upstream haydentech/cosmoe.
-COSMOE_REPO=${COSMOE_REPO:-idumych/kireji}
-COSMOE_TAG=${COSMOE_TAG:-kireji}
+COSMOE_REPO=${COSMOE_REPO:-idumych/hokku}
+COSMOE_TAG=${COSMOE_TAG:-hokku}
 LINUXDEPLOY_TAG=1-alpha-20251107-1
 APPIMAGETOOL_TAG=1.9.1
 ARCH=x86_64
