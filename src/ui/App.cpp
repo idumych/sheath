@@ -62,7 +62,7 @@ public:
 
 	void AboutRequested() override
 	{
-		BAlert* about = new BAlert("About Sheath", "Sheath 0.1.0\n\n"
+		BAlert* about = new BAlert("About Sheath", "Sheath 0.1.1\n\n"
 			"A Bible reader built on the SWORD library from CrossWire. Inspired by AndBible "
 			"and LinBible.\n\nGPL-3.0. https://github.com/idumych/sheath", "OK");
 		about->Go(nullptr);

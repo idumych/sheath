@@ -1,3 +1,11 @@
+sheath (0.1.1-1) unstable; urgency=medium
+
+  * Linux AppImage: built with a Hokku that redraws controls moved by a
+    layout, copies a resized window's newest drawing to the screen, and
+    locks the window's picture while the text caret blinks.
+
+ -- Ian <idumych@gmail.com>  Sat, 24 Oct 2026 13:05:10 -0700
+
 sheath (0.1.0-1) unstable; urgency=medium
 
   * First release: SWORD Bible reader with module installer, Strong's
