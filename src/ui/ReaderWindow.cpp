@@ -17,7 +17,8 @@
 #include <PopUpMenu.h>
 #include <ScrollView.h>
 #include <SplitView.h>
-#include <TextControl.h>
+#include <StringView.h>
+#include <TextView.h>
 
 #include <cmath>
 #include <thread>
@@ -33,6 +34,8 @@
 #include "InstallWindow.h"
 #include "MyBible.h"
 #include "SearchWindow.h"
+#include "VerseMenu.h"
+#include "Widgets.h"
 
 using namespace sheath;
 
@@ -60,6 +63,12 @@ enum {
 	kMsgImportPanel = 'impp',
 	kMsgImportRef = 'impr',
 	kMsgImportDone = 'impd',
+	kMsgBack = 'back',
+	kMsgForward = 'forw',
+	kMsgFocusRef = 'fref',
+	kMsgBookmarksButton = 'bmbt',
+	kMsgSync = 'sync',
+	kMsgSaveNote = 'svnt',
 };
 
 const char* kOptionNames[] = {"Strong's numbers", "Footnotes", "Headings", "Words of Christ in red"};
@@ -73,6 +82,68 @@ bool* OptionField(DisplayOptions& o, int i)
 		default: return &o.redLetter;
 	}
 }
+
+
+std::string EscapeXml(const std::string& text)
+{
+	std::string out;
+	for (char c : text) {
+		switch (c) {
+			case '&': out += "&amp;"; break;
+			case '<': out += "&lt;"; break;
+			case '>': out += "&gt;"; break;
+			default: out += c;
+		}
+	}
+	return out;
+}
+
+
+// A small window for a verse's note. Save sends the reply message with "note" added.
+class NoteWindow : public BWindow {
+public:
+	NoteWindow(const std::string& title, const std::string& note, const BMessage& reply,
+		BMessenger target)
+		:
+		BWindow(BRect(0, 0, 420, 220), title.c_str(), B_TITLED_WINDOW,
+			B_AUTO_UPDATE_SIZE_LIMITS | B_CLOSE_ON_ESCAPE),
+		fReply(reply),
+		fTarget(target)
+	{
+		fText = new BTextView("note");
+		fText->SetText(note.c_str());
+		fText->SetInsets(6, 6, 6, 6);
+		BScrollView* scroll = new BScrollView("scroll", fText, 0, false, true);
+		scroll->SetExplicitMinSize(BSize(360, 140));
+		BButton* save = new BButton("save", "Save", new BMessage('save'));
+		BLayoutBuilder::Group<>(this, B_VERTICAL)
+			.SetInsets(B_USE_WINDOW_INSETS)
+			.Add(scroll)
+			.AddGroup(B_HORIZONTAL)
+				.AddGlue()
+				.Add(new BButton("cancel", "Cancel", new BMessage(B_QUIT_REQUESTED)))
+				.Add(save)
+			.End();
+		SetDefaultButton(save);
+		fText->MakeFocus(true);
+	}
+
+	void MessageReceived(BMessage* message) override
+	{
+		if (message->what == 'save') {
+			fReply.AddString("note", fText->Text());
+			fTarget.SendMessage(&fReply);
+			Quit();
+			return;
+		}
+		BWindow::MessageReceived(message);
+	}
+
+private:
+	BMessage fReply;
+	BMessenger fTarget;
+	BTextView* fText;
+};
 
 }	// namespace
 
@@ -90,21 +161,23 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	if (!fState.style.family.empty() && !ChapterView::HasFamily(fState.style.family.c_str()))
 		fState.style.family = "";
 
+	// The menus and toolbar follow LinBible's layout.
 	BMenuBar* menuBar = new BMenuBar("menu");
-	BMenu* app = new BMenu("Sheath");
-	app->AddItem(new BMenuItem("About Sheath", new BMessage(B_ABOUT_REQUESTED)));
-	app->AddSeparatorItem();
-	app->AddItem(new BMenuItem("Quit", new BMessage(B_QUIT_REQUESTED), 'Q'));
-	menuBar->AddItem(app);
-	fModuleMenu = new BMenu("Bible");
-	fModuleMenu->SetRadioMode(true);
+	fModuleMenu = new BMenu("Library");	// filled by BuildModuleMenu()
 	menuBar->AddItem(fModuleMenu);
-	BMenu* go = new BMenu("Go");
-	go->AddItem(new BMenuItem("Previous chapter", new BMessage(kMsgPrev), B_LEFT_ARROW));
-	go->AddItem(new BMenuItem("Next chapter", new BMessage(kMsgNext), B_RIGHT_ARROW));
-	go->AddSeparatorItem();
-	go->AddItem(new BMenuItem("Search" "\xE2\x80\xA6", new BMessage(kMsgSearchWindow), 'F'));
-	menuBar->AddItem(go);
+	BMenu* navigate = new BMenu("Navigate");
+	navigate->AddItem(new BMenuItem("Back", new BMessage(kMsgBack), '['));
+	navigate->AddItem(new BMenuItem("Forward", new BMessage(kMsgForward), ']'));
+	navigate->AddSeparatorItem();
+	navigate->AddItem(new BMenuItem("Previous chapter", new BMessage(kMsgPrev), B_LEFT_ARROW));
+	navigate->AddItem(new BMenuItem("Next chapter", new BMessage(kMsgNext), B_RIGHT_ARROW));
+	navigate->AddSeparatorItem();
+	navigate->AddItem(new BMenuItem("Go to reference" "\xE2\x80\xA6", new BMessage(kMsgFocusRef),
+		'L'));
+	menuBar->AddItem(navigate);
+	BMenu* search = new BMenu("Search");
+	search->AddItem(new BMenuItem("Search" "\xE2\x80\xA6", new BMessage(kMsgSearchWindow), 'F'));
+	menuBar->AddItem(search);
 	fBookmarksMenu = new BMenu("Bookmarks");
 	menuBar->AddItem(fBookmarksMenu);
 	fViewMenu = new BMenu("View");
@@ -151,35 +224,75 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 		fViewMenu->AddItem(fOptionItems[i]);
 	}
 	menuBar->AddItem(fViewMenu);
+	BMenu* help = new BMenu("Help");
+	help->AddItem(new BMenuItem("About Sheath", new BMessage(B_ABOUT_REQUESTED)));
+	menuBar->AddItem(help);
 
+	fBackButton = new BButton("back", "\xE2\x97\x80", new BMessage(kMsgBack));		// ◀
+	fBackButton->SetToolTip("Back");
+	fForwardButton = new BButton("forward", "\xE2\x96\xB6", new BMessage(kMsgForward));	// ▶
+	fForwardButton->SetToolTip("Forward");
+	fDocMenu = new BPopUpMenu("Bible");
+	fDocMenu->SetLabelFromMarked(false);
+	fDocField = new BMenuField("bible", nullptr, fDocMenu);
 	fBookMenu = new BPopUpMenu("Book");
 	fBookField = new BMenuField("book", nullptr, fBookMenu);
 	fChapterMenu = new BPopUpMenu("1");
 	fChapterField = new BMenuField("chapter", nullptr, fChapterMenu);
-	fPrevButton = new BButton("prev", "\xE2\x97\x80", new BMessage(kMsgPrev));	// ◀
-	fNextButton = new BButton("next", "\xE2\x96\xB6", new BMessage(kMsgNext));	// ▶
-	fRefControl = new BTextControl("ref", nullptr, "", new BMessage(kMsgGoRef));
-	fRefControl->SetToolTip("Go to a reference, e.g. John 3:16");
+	fPrevButton = new BButton("prev", "\xE2\x8F\xAE", new BMessage(kMsgPrev));	// ⏮
+	fPrevButton->SetToolTip("Previous chapter");
+	fNextButton = new BButton("next", "\xE2\x8F\xAD", new BMessage(kMsgNext));	// ⏭
+	fNextButton->SetToolTip("Next chapter");
+	for (BButton* b : {fBackButton, fForwardButton, fPrevButton, fNextButton})
+		b->SetExplicitMaxSize(BSize(b->MinSize().height * 1.4f, B_SIZE_UNSET));
+	fRefControl = new HintField("ref", "Go to" "\xE2\x80\xA6" " (e.g. John 3:16)",
+		new BMessage(kMsgGoRef));
+	BScrollView* refBorder = new BScrollView("ref border", fRefControl, 0, false, false,
+		B_FANCY_BORDER);
+	BButton* searchButton = new BButton("search", "Search", new BMessage(kMsgSearchWindow));
+	fBookmarksButton = new BButton("bookmarks", "Bookmarks", new BMessage(kMsgBookmarksButton));
+	BButton* downloadButton = new BButton("download", "Download",
+		new BMessage(kMsgInstallWindow));
+
+	fHeader = new PaneHeader("header", nullptr, nullptr);
 	fText = new ChapterView("text");
 	BScrollView* scroll = new BScrollView("scroll", fText, 0, false, true, B_NO_BORDER);
+	BMessage* close = new BMessage(kMsgParallel);
+	close->AddString("module", "");
+	fHeader2 = new PaneHeader("header2", new BMessage(kMsgSync), close);
+	fHeader2->SetSync(true);
 	fText2 = new ChapterView("parallel");
-	fScroll2 = new BScrollView("scroll2", fText2, 0, false, true, B_NO_BORDER);
+	BScrollView* scroll2 = new BScrollView("scroll2", fText2, 0, false, true, B_NO_BORDER);
+	BGroupView* pane = new BGroupView(B_VERTICAL, 0);
+	BLayoutBuilder::Group<>(pane).Add(fHeader).Add(scroll);
+	fPane2 = new BGroupView(B_VERTICAL, 0);
+	BLayoutBuilder::Group<>((BGroupView*)fPane2).Add(fHeader2).Add(scroll2);
 	BSplitView* split = new BSplitView(B_HORIZONTAL, 0);
-	BLayoutBuilder::Split<>(split).Add(scroll).Add(fScroll2);
+	BLayoutBuilder::Split<>(split).Add(pane).Add(fPane2);
+	fVerseMenu = new VerseMenu();
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(menuBar)
 		.AddGroup(B_HORIZONTAL, B_USE_HALF_ITEM_SPACING)
 			.SetInsets(B_USE_HALF_ITEM_INSETS)
+			.Add(fBackButton)
+			.Add(fForwardButton)
+			.Add(fDocField, 2.0f)
+			.Add(fBookField, 1.5f)
+			.Add(fChapterField)
 			.Add(fPrevButton)
 			.Add(fNextButton)
-			.Add(fBookField)
-			.Add(fChapterField)
-			.AddGlue()
-			.Add(fRefControl, 2.0f)
+			.Add(refBorder, 2.0f)
+			.AddGlue(0.5f)
+			.Add(searchButton)
+			.Add(fBookmarksButton)
+			.Add(downloadButton)
 		.End()
-		.Add(split);
-	fScroll2->Hide();
+		.Add(split)
+		.Add(fVerseMenu);
+	fPane2->Hide();
+	fVerseMenu->Hide();
+	fHeader2->SetTarget(this);
 
 	fSearch = new SearchWindow(BMessenger(this));
 	fSearch->Hide();
@@ -188,6 +301,7 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	BuildModuleMenu();
 	BuildBookmarksMenu();
 	UpdateOptionItems();
+	UpdateHistoryButtons();
 	ShowChapter(fState.verse);
 	if (fState.verse > 1)
 		fText->RestoreVerse(fState.verse);
@@ -199,7 +313,7 @@ void ReaderWindow::BuildBookmarksMenu()
 	while (BMenuItem* item = fBookmarksMenu->RemoveItem((int32)0))
 		delete item;
 	if (fBookmarks.All().empty()) {
-		BMenuItem* none = new BMenuItem("Right-click a verse to bookmark it", nullptr);
+		BMenuItem* none = new BMenuItem("Click a verse, then Bookmark", nullptr);
 		none->SetEnabled(false);
 		fBookmarksMenu->AddItem(none);
 		return;
@@ -299,8 +413,21 @@ void ReaderWindow::ToggleBookmark(int verse)
 	if (!fBookmarks.Save(&error))
 		fprintf(stderr, "Sheath: %s\n", error.c_str());
 	BuildBookmarksMenu();
+	RefreshAfterBookmarkChange();
+}
+
+
+void ReaderWindow::RefreshAfterBookmarkChange()
+{
+	// Redraws the verse numbers' bookmark colour, keeping the place and the verse card.
 	int top = fText->VerseAtTop();
 	ShowChapter(top);
+	if (!fVerseMenu->IsHidden()) {
+		int verse = fVerseMenu->Verse();
+		ChapterView* view = fTappedView != nullptr ? fTappedView : fText;
+		view->SelectVerse(verse);
+		VerseTapped(verse, view);
+	}
 }
 
 
@@ -398,12 +525,33 @@ void ReaderWindow::BuildModuleMenu()
 	}
 
 	fModuleMenu->AddSeparatorItem();
-	BMenuItem* install = new BMenuItem("Install modules" "\xE2\x80\xA6",
-		new BMessage(kMsgInstallWindow));
-	fModuleMenu->AddItem(install);
+	fModuleMenu->AddItem(new BMenuItem("Download modules" "\xE2\x80\xA6",
+		new BMessage(kMsgInstallWindow)));
 	fModuleMenu->AddItem(new BMenuItem("Import MyBible module" "\xE2\x80\xA6",
 		new BMessage(kMsgImportPanel)));
+	fModuleMenu->AddSeparatorItem();
+	fModuleMenu->AddItem(new BMenuItem("Quit", new BMessage(B_QUIT_REQUESTED), 'Q'));
+	BuildDocumentMenu(bibles);
 	BuildBookMenu();
+}
+
+
+void ReaderWindow::BuildDocumentMenu(const std::vector<ModuleInfo>& bibles)
+{
+	// The toolbar's Bible chooser: the module name on the field, "KJV — King James Version"
+	// in the menu.
+	while (BMenuItem* item = fDocMenu->RemoveItem((int32)0))
+		delete item;
+	for (const ModuleInfo& m : bibles) {
+		BMessage* msg = new BMessage(kMsgModule);
+		msg->AddString("module", m.name.c_str());
+		std::string label = m.name + " \xE2\x80\x94 " + m.description;
+		BMenuItem* item = new BMenuItem(label.c_str(), msg);
+		item->SetMarked(m.name == fState.module);
+		fDocMenu->AddItem(item);
+	}
+	fDocMenu->SetTargetForItems(this);
+	fDocField->MenuItem()->SetLabel(fState.module.empty() ? "No Bible" : fState.module.c_str());
 }
 
 
@@ -463,12 +611,19 @@ void ReaderWindow::ShowChapter(int scrollToVerse)
 	if (fState.module.empty()) {
 		fVerses.clear();
 		fText->SetMessageText("No Bible is installed yet.\n\n"
-			"Choose Bible \xE2\x96\xB8 Install modules\xE2\x80\xA6 to download one, "
+			"Click Download (or Library \xE2\x96\xB8 Download modules\xE2\x80\xA6) to get one, "
 			"for example the King James Version (KJV).", fState.style);
 		SetTitle("Sheath");
 		return;
 	}
 	fVerses = fLibrary->Chapter(fState.module, fState.book, fState.chapter, fState.options);
+	std::string bookName = fState.book;
+	for (const BookInfo& b : fBooks) {
+		if (b.osis == fState.book)
+			bookName = b.name;
+	}
+	// The book's name above its first chapter, as LinBible shows the book title.
+	std::string title = fState.chapter == 1 ? bookName : "";
 	if (fVerses.empty()) {
 		fText->SetMessageText("This chapter is empty in this module.", fState.style);
 	} else {
@@ -477,7 +632,7 @@ void ReaderWindow::ShowChapter(int scrollToVerse)
 			if (b.book == fState.book && b.chapter == fState.chapter)
 				marked.insert(b.verse);
 		}
-		fText->SetChapter(fVerses, fState.style, marked);
+		fText->SetChapter(fVerses, fState.style, marked, title, fState.chapter);
 		if (scrollToVerse > 1)
 			fText->ScrollToVerse(scrollToVerse);
 	}
@@ -490,25 +645,30 @@ void ReaderWindow::ShowChapter(int scrollToVerse)
 		if (fVerses2.empty())
 			fText2->SetMessageText("This chapter is empty in this module.", fState.style);
 		else
-			fText2->SetChapter(fVerses2, fState.style);
+			fText2->SetChapter(fVerses2, fState.style, std::set<int>(), title, fState.chapter);
 		fText2->SyncToVerse(fText->VerseAtTop());
-		if (fScroll2->IsHidden())
-			fScroll2->Show();
+		if (fPane2->IsHidden())
+			fPane2->Show();
 	} else {
 		fVerses2.clear();
-		if (!fScroll2->IsHidden())
-			fScroll2->Hide();
+		if (!fPane2->IsHidden())
+			fPane2->Hide();
 	}
 
-	std::string title = FormatRef({fState.book, fState.chapter, 0}) + " \xE2\x80\x94 "
-		+ fState.module + (parallel ? " | " + fState.parallel : "") + " \xE2\x80\x94 Sheath";
-	SetTitle(title.c_str());
+	std::string ref = FormatRef({fState.book, fState.chapter, 0});
+	fHeader->SetTitle((fState.module + " \xE2\x80\x93 " + ref).c_str());
+	fHeader2->SetTitle((fState.parallel + " \xE2\x80\x93 " + ref).c_str());
+	std::string windowTitle = ref + " \xE2\x80\x94 " + fState.module
+		+ (parallel ? " | " + fState.parallel : "") + " \xE2\x80\x94 Sheath";
+	SetTitle(windowTitle.c_str());
 	BuildChapterMenu();
 }
 
 
 void ReaderWindow::GoTo(const std::string& book, int chapter, int verse)
 {
+	if (book != fState.book || chapter != fState.chapter)
+		HideVerseMenu();
 	fState.book = book;
 	fState.chapter = chapter;
 	ShowChapter(verse);
@@ -559,7 +719,7 @@ void ReaderWindow::OpenLink(int32 kind, const std::string& target, int verse, bo
 		case LinkKind::CrossRef: {
 			std::vector<VerseRef> refs = ParseOsisRefList(target);
 			if (!refs.empty())
-				GoTo(refs[0].book, refs[0].chapter, refs[0].verse);
+				JumpTo(refs[0].book, refs[0].chapter, refs[0].verse);
 			break;
 		}
 		default:
@@ -582,6 +742,15 @@ void ReaderWindow::MessageReceived(BMessage* message)
 		case kMsgModule: {
 			int verse = fText->VerseAtTop();
 			fState.module = message->GetString("module", "");
+			HideVerseMenu();
+			for (BMenu* menu : {fModuleMenu, (BMenu*)fDocMenu}) {
+				for (int32 i = 0; BMenuItem* item = menu->ItemAt(i); i++) {
+					BMessage* msg = item->Message();
+					if (msg != nullptr && msg->what == kMsgModule)
+						item->SetMarked(fState.module == msg->GetString("module", ""));
+				}
+			}
+			fDocField->MenuItem()->SetLabel(fState.module.c_str());
 			BuildBookMenu();
 			ShowChapter(verse);
 			break;
@@ -602,8 +771,8 @@ void ReaderWindow::MessageReceived(BMessage* message)
 			VerseRef ref;
 			ModuleInfo info;
 			std::string v11n = fLibrary->Find(fState.module, &info) ? info.versification : "KJV";
-			if (ParseRef(fRefControl->Text(), &ref, v11n)) {
-				GoTo(ref.book, ref.chapter, ref.verse);
+			if (ParseRef(message->GetString("text", fRefControl->Text()), &ref, v11n)) {
+				JumpTo(ref.book, ref.chapter, ref.verse);
 				fRefControl->SetText("");
 			} else {
 				beep();
@@ -664,7 +833,7 @@ void ReaderWindow::MessageReceived(BMessage* message)
 			}
 			break;
 		case SearchWindow::kMsgShowVerse:
-			GoTo(message->GetString("book", "Gen"), message->GetInt32("chapter", 1),
+			JumpTo(message->GetString("book", "Gen"), message->GetInt32("chapter", 1),
 				message->GetInt32("verse", 0));
 			Activate();
 			break;
@@ -711,7 +880,7 @@ void ReaderWindow::MessageReceived(BMessage* message)
 			ChapterView* source = nullptr;
 			message->FindPointer("view", (void**)&source);
 			ChapterView* other = source == fText ? fText2 : fText;
-			if (!fState.parallel.empty())
+			if (!fState.parallel.empty() && fHeader2->Sync())
 				other->SyncToVerse(message->GetInt32("verse", 1));
 			break;
 		}
@@ -721,11 +890,81 @@ void ReaderWindow::MessageReceived(BMessage* message)
 		case kMsgCopyVerse:
 			CopyVerse(message->GetInt32("verse", 0));
 			break;
+		case ChapterView::kMsgVerseTapped: {
+			ChapterView* view = nullptr;
+			message->FindPointer("view", (void**)&view);
+			VerseTapped(message->GetInt32("verse", 0), view == fText2 ? fText2 : fText);
+			break;
+		}
+		case VerseMenu::kMsgBookmark:
+			ToggleBookmark(message->GetInt32("verse", 0));
+			break;
+		case VerseMenu::kMsgNote:
+			EditNote(message->GetInt32("verse", 0));
+			break;
+		case VerseMenu::kMsgCopy:
+			CopyVerse(message->GetInt32("verse", 0));
+			HideVerseMenu();
+			break;
+		case VerseMenu::kMsgCompare:
+			CompareVerse(message->GetInt32("verse", 0));
+			break;
+		case VerseMenu::kMsgDefinitions:
+			ShowDefinitions(message->GetInt32("verse", 0));
+			break;
+		case VerseMenu::kMsgClose:
+			HideVerseMenu();
+			break;
+		case kMsgSaveNote: {
+			std::string book = message->GetString("book", "");
+			int chapter = message->GetInt32("chapter", 0);
+			int verse = message->GetInt32("verse", 0);
+			const Bookmark* old = fBookmarks.Find(book, chapter, verse);
+			int64_t created = old != nullptr ? old->created : (int64_t)time(nullptr);
+			fBookmarks.Set({book, chapter, verse, message->GetString("note", ""), created});
+			std::string error;
+			if (!fBookmarks.Save(&error))
+				fprintf(stderr, "Sheath: %s\n", error.c_str());
+			BuildBookmarksMenu();
+			if (book == fState.book && chapter == fState.chapter)
+				RefreshAfterBookmarkChange();
+			break;
+		}
+		case kMsgBack:
+			GoHistory(-1);
+			break;
+		case kMsgForward:
+			GoHistory(1);
+			break;
+		case kMsgFocusRef:
+			fRefControl->MakeFocus(true);
+			fRefControl->SelectAll();
+			break;
+		case kMsgSync:
+			if (fHeader2->Sync())
+				fText2->SyncToVerse(fText->VerseAtTop());
+			break;
+		case kMsgBookmarksButton: {
+			// The Bookmarks menu, popped up under the toolbar button.
+			BPopUpMenu* menu = new BPopUpMenu("bookmarks", false, false);
+			for (int32 i = 0; BMenuItem* item = fBookmarksMenu->ItemAt(i); i++) {
+				BMenuItem* copy = new BMenuItem(item->Label(),
+					item->Message() != nullptr ? new BMessage(*item->Message()) : nullptr);
+				copy->SetEnabled(item->IsEnabled());
+				menu->AddItem(copy);
+			}
+			menu->SetTargetForItems(this);
+			menu->SetAsyncAutoDestruct(true);
+			BPoint where = fBookmarksButton->ConvertToScreen(
+				fBookmarksButton->Bounds().LeftBottom());
+			menu->Go(where, true, false, true);
+			break;
+		}
 		case kMsgToggleBookmark:
 			ToggleBookmark(message->GetInt32("verse", 0));
 			break;
 		case kMsgOpenBookmark:
-			GoTo(message->GetString("book", "Gen"), message->GetInt32("chapter", 1),
+			JumpTo(message->GetString("book", "Gen"), message->GetInt32("chapter", 1),
 				message->GetInt32("verse", 0));
 			break;
 		case ChapterView::kMsgLinkClicked:
@@ -739,4 +978,162 @@ void ReaderWindow::MessageReceived(BMessage* message)
 		default:
 			BWindow::MessageReceived(message);
 	}
+}
+
+
+// #pragma mark - verse card
+
+
+void ReaderWindow::VerseTapped(int verse, ChapterView* view)
+{
+	if (verse <= 0)
+		return;
+	ChapterView* other = view == fText ? fText2 : fText;
+	other->ClearSelection();
+	fTappedView = view;
+	std::string ref = FormatRef({fState.book, fState.chapter, verse});
+	bool marked = fBookmarks.Find(fState.book, fState.chapter, verse) != nullptr;
+	fVerseMenu->ShowFor(verse, ref.c_str(), marked);
+}
+
+
+void ReaderWindow::HideVerseMenu()
+{
+	if (!fVerseMenu->IsHidden())
+		fVerseMenu->Hide();
+	fText->ClearSelection();
+	fText2->ClearSelection();
+	fTappedView = nullptr;
+}
+
+
+void ReaderWindow::EditNote(int verse)
+{
+	const Bookmark* mark = fBookmarks.Find(fState.book, fState.chapter, verse);
+	BMessage reply(kMsgSaveNote);
+	reply.AddString("book", fState.book.c_str());
+	reply.AddInt32("chapter", fState.chapter);
+	reply.AddInt32("verse", verse);
+	std::string title = "Note on " + FormatRef({fState.book, fState.chapter, verse});
+	NoteWindow* window = new NoteWindow(title, mark != nullptr ? mark->note : "", reply,
+		BMessenger(this));
+	window->CenterIn(Frame());
+	window->Show();
+}
+
+
+void ReaderWindow::CompareVerse(int verse)
+{
+	// The verse in every installed Bible, the current one first.
+	DisplayOptions options = fState.options;
+	options.strongs = options.morph = options.footnotes = false;
+	std::vector<std::string> names = {fState.module};
+	for (const ModuleInfo& m : fLibrary->Modules()) {
+		if (m.type == "Bible" && m.name != fState.module)
+			names.push_back(m.name);
+	}
+	std::string xhtml;
+	for (const std::string& name : names) {
+		for (const VerseText& v : fLibrary->Chapter(name, fState.book, fState.chapter, options)) {
+			if (v.verse == verse)
+				xhtml += "<h3>" + EscapeXml(name) + "</h3><p>" + v.xhtml + "</p>";
+		}
+	}
+	if (xhtml.empty())
+		xhtml = "<p>No installed Bible has this verse.</p>";
+	EntryWindow::Show("Compare " + FormatRef({fState.book, fState.chapter, verse}), xhtml,
+		fState.style);
+}
+
+
+void ReaderWindow::ShowDefinitions(int verse)
+{
+	// Each word's Strong's entry and morphology, in verse order. The verse is rendered again
+	// with Strong's numbers and morphology on, whatever the view shows.
+	DisplayOptions options = fState.options;
+	options.strongs = options.morph = true;
+	struct Word { std::string text, strongs, morph; };
+	std::vector<Word> words;
+	std::string lastText;
+	for (const VerseText& v : fLibrary->Chapter(fState.module, fState.book, fState.chapter,
+			options)) {
+		if (v.verse != verse)
+			continue;
+		for (const Block& b : ParseXhtml(v.xhtml)) {
+			if (b.kind == Block::Heading)
+				continue;
+			for (const sheath::Run& r : b.runs) {
+				if (r.link.kind == LinkKind::None) {
+					std::string t = r.text;
+					size_t end = t.find_last_not_of(" \t\n,.;:!?\xE2\x80\x99'\"()[]");
+					if (end != std::string::npos) {
+						t = t.substr(0, end + 1);
+						size_t start = t.find_last_of(" \t\n(\"");
+						lastText = start == std::string::npos ? t : t.substr(start + 1);
+					}
+				} else if (r.link.kind == LinkKind::Strongs) {
+					words.push_back({lastText, r.link.target, ""});
+				} else if (r.link.kind == LinkKind::Morph && !words.empty()
+						&& words.back().morph.empty()) {
+					words.back().morph = r.link.target;
+				}
+			}
+		}
+	}
+
+	std::string ref = FormatRef({fState.book, fState.chapter, verse});
+	std::string xhtml;
+	for (const Word& w : words) {
+		const char* module = w.strongs[0] == 'H' ? "StrongsHebrew" : "StrongsGreek";
+		xhtml += "<h3>" + EscapeXml(w.text.empty() ? w.strongs : w.text + " \xC2\xB7 " + w.strongs)
+			+ "</h3>";
+		if (!w.morph.empty()) {
+			std::string code = w.morph.substr(w.morph.find(':') + 1);
+			std::string entry = w.morph.compare(0, 9, "robinson:") == 0
+				? fLibrary->Entry("Robinson", code, fState.options) : "";
+			xhtml += "<p><b>" + EscapeXml(code) + "</b>" + (entry.empty() ? "" : " " + entry)
+				+ "</p>";
+		}
+		std::string entry = fLibrary->Entry(module, w.strongs, fState.options);
+		xhtml += entry.empty() ? "<p>(" + std::string(module) + " has no entry.)</p>"
+			: "<p>" + entry + "</p>";
+	}
+	if (words.empty()) {
+		xhtml = "<p>" + EscapeXml(fState.module) + " has no Strong's numbers for " + EscapeXml(ref)
+			+ ". Try a Bible with Strong's numbers, such as the KJV.</p>";
+	}
+	EntryWindow::Show("Definitions for " + ref, xhtml, fState.style);
+}
+
+
+// #pragma mark - history
+
+
+void ReaderWindow::JumpTo(const std::string& book, int chapter, int verse)
+{
+	fBack.push_back({fState.book, fState.chapter, fText->VerseAtTop()});
+	fForward.clear();
+	UpdateHistoryButtons();
+	GoTo(book, chapter, verse);
+}
+
+
+void ReaderWindow::GoHistory(int delta)
+{
+	std::vector<Place>& from = delta < 0 ? fBack : fForward;
+	std::vector<Place>& to = delta < 0 ? fForward : fBack;
+	if (from.empty())
+		return;
+	Place place = from.back();
+	from.pop_back();
+	to.push_back({fState.book, fState.chapter, fText->VerseAtTop()});
+	UpdateHistoryButtons();
+	GoTo(place.book, place.chapter, place.verse);
+}
+
+
+void ReaderWindow::UpdateHistoryButtons()
+{
+	fBackButton->SetEnabled(!fBack.empty());
+	fForwardButton->SetEnabled(!fForward.empty());
 }

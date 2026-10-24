@@ -9,6 +9,7 @@
 #include <Window.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -190,14 +191,40 @@ bool ChapterView::HasFamily(const char* family)
 
 
 void ChapterView::SetChapter(const std::vector<VerseText>& verses, const ReadingStyle& style,
-	const std::set<int>& bookmarked)
+	const std::set<int>& bookmarked, const std::string& title, int chapter)
 {
 	UpdatePalette();
 	fLinks.clear();
 	fVerses.clear();
+	fCentered = true;
+	fColumnSize = style.size;
+	UpdateColumn();
 	RunBuilder b(style);
 	BFont numberFont(b.Base());
 	numberFont.SetSize(style.size * 0.68f);
+
+	// The book title on its first chapter, then a centred "— N —", as in LinBible.
+	if (!title.empty()) {
+		BFont titleFont(b.Base());
+		titleFont.SetSize(style.size * 1.25f);
+		titleFont.SetFace(B_BOLD_FACE);
+		b.Add(title, titleFont, kText, true);
+		b.Add("\n", b.Base(), kText, true);
+		b.Gap(0.6f);
+	}
+	if (chapter > 0) {
+		BFont markerFont(b.Base());
+		markerFont.SetSize(style.size * 0.75f);
+		std::string marker = "\xE2\x80\x94 " + std::to_string(chapter) + " \xE2\x80\x94";
+		float column = Bounds().Width() - TextRect().left * 2;
+		if (column < style.size * 10)
+			column = style.size * 34;
+		float space = markerFont.StringWidth(" ");
+		int pad = space > 0 ? (int)((column - markerFont.StringWidth(marker.c_str())) / 2 / space) : 0;
+		b.Add(std::string(std::max(pad, 0), ' ') + marker, markerFont, kVerseNumber, true);
+		b.Add("\n", b.Base(), kText, true);
+		b.Gap(0.4f);
+	}
 
 	for (const VerseText& v : verses) {
 		std::vector<Block> blocks = ParseXhtml(v.xhtml);
@@ -216,7 +243,7 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, const Reading
 					b.Gap(0.6f);
 				}
 			} else if (!numbered) {
-				if (b.Length() > 0) {
+				if (!fVerses.empty()) {
 					if (style.versePerLine) {
 						b.Add("\n", b.Base(), kText, true);
 						b.Gap(0.45f);
@@ -255,6 +282,8 @@ void ChapterView::SetChapter(const std::vector<VerseText>& verses, const Reading
 void ChapterView::SetEntry(const std::string& xhtml, const ReadingStyle& style, char strongsPrefix)
 {
 	UpdatePalette();
+	fCentered = false;
+	UpdateColumn();
 	fLinks.clear();
 	fVerses.clear();
 	RunBuilder b(style);
@@ -278,11 +307,45 @@ void ChapterView::SetEntry(const std::string& xhtml, const ReadingStyle& style, 
 void ChapterView::SetMessageText(const char* text, const ReadingStyle& style)
 {
 	UpdatePalette();
+	fCentered = true;
+	fColumnSize = style.size;
+	UpdateColumn();
 	fLinks.clear();
 	fVerses.clear();
 	RunBuilder b(style);
 	b.Add(text, b.Base(), kHeading);
 	Render(b);
+}
+
+
+void ChapterView::UpdateColumn()
+{
+	// A reading column about 34 em wide, centred, like LinBible's.
+	float width = Bounds().Width();
+	float side = 16;
+	if (fCentered && width > 0) {
+		float column = fColumnSize * 34;
+		side = std::max(16.0f, floorf((width - column) / 2));
+	}
+	if (TextRect().left != side)
+		SetInsets(side, 12, side, 12);
+}
+
+
+void ChapterView::SelectVerse(int verse)
+{
+	for (size_t i = 0; i < fVerses.size(); i++) {
+		if (fVerses[i].verse != verse)
+			continue;
+		int32 start = fVerses[i].offset;
+		int32 end = i + 1 < fVerses.size() ? fVerses[i + 1].offset : TextLength();
+		// Leave out the line break and gap before the next verse.
+		const char* text = Text();
+		while (end > start && (text[end - 1] == '\n' || text[end - 1] == ' '))
+			end--;
+		Select(start, end);
+		return;
+	}
 }
 
 
@@ -346,6 +409,7 @@ void ChapterView::RestoreVerse(int verse)
 void ChapterView::FrameResized(float width, float height)
 {
 	BTextView::FrameResized(width, height);
+	UpdateColumn();
 	if (fRestoreVerse > 0 && Window() != nullptr && !Window()->IsHidden()) {
 		ScrollToVerse(fRestoreVerse);
 		fRestoreVerse = 0;
@@ -435,6 +499,9 @@ void ChapterView::MouseDown(BPoint where)
 	}
 	const LinkRange* link = (buttons & B_PRIMARY_MOUSE_BUTTON) ? LinkAt(where) : nullptr;
 	if (link == nullptr) {
+		// A click that doesn't drag is a verse tap (MouseUp); a drag selects text.
+		fDownPoint = where;
+		fDownVerse = (buttons & B_PRIMARY_MOUSE_BUTTON) ? VerseAt(where) : 0;
 		BTextView::MouseDown(where);
 		return;
 	}
@@ -442,6 +509,25 @@ void ChapterView::MouseDown(BPoint where)
 	msg.AddInt32("kind", (int32)link->link.kind);
 	msg.AddString("target", link->link.target.c_str());
 	msg.AddInt32("verse", link->verse);
+	msg.AddPointer("view", this);
+	Window()->PostMessage(&msg);
+}
+
+
+void ChapterView::MouseUp(BPoint where)
+{
+	BTextView::MouseUp(where);
+	int verse = fDownVerse;
+	fDownVerse = 0;
+	if (verse <= 0 || fabsf(where.x - fDownPoint.x) > 4 || fabsf(where.y - fDownPoint.y) > 4)
+		return;
+	int32 start, end;
+	GetSelection(&start, &end);
+	if (start != end)
+		return;
+	SelectVerse(verse);
+	BMessage msg(kMsgVerseTapped);
+	msg.AddInt32("verse", verse);
 	msg.AddPointer("view", this);
 	Window()->PostMessage(&msg);
 }

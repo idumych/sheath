@@ -17,8 +17,10 @@ class BFilePanel;
 class BMenuField;
 class BMenuItem;
 class BPopUpMenu;
-class BTextControl;
+class HintField;
+class PaneHeader;
 class SearchWindow;
+class VerseMenu;
 
 struct ReaderState {
 	std::string module;
@@ -57,6 +59,21 @@ private:
 	void CopyVerse(int verse);
 	void ToggleBookmark(int verse);
 	void ImportMyBible(const entry_ref& ref);
+	void BuildDocumentMenu(const std::vector<sheath::ModuleInfo>& bibles);
+
+	// The verse card (LinBible's tap menu) and its actions.
+	void VerseTapped(int verse, ChapterView* view);
+	void HideVerseMenu();
+	void RefreshAfterBookmarkChange();
+	void EditNote(int verse);
+	void CompareVerse(int verse);
+	void ShowDefinitions(int verse);
+
+	// Back/forward through places jumped to (references, bookmarks, links, search results).
+	struct Place { std::string book; int chapter; int verse; };
+	void JumpTo(const std::string& book, int chapter, int verse);
+	void GoHistory(int delta);
+	void UpdateHistoryButtons();
 
 	sheath::SwordLibrary* fLibrary;
 	ReaderState fState;
@@ -71,12 +88,23 @@ private:
 	BPopUpMenu* fChapterMenu;
 	BMenuField* fBookField;
 	BMenuField* fChapterField;
+	BButton* fBackButton;
+	BButton* fForwardButton;
 	BButton* fPrevButton;
 	BButton* fNextButton;
-	BTextControl* fRefControl;
+	BButton* fBookmarksButton;
+	BPopUpMenu* fDocMenu;
+	BMenuField* fDocField;
+	HintField* fRefControl;
+	PaneHeader* fHeader;
+	PaneHeader* fHeader2;
 	ChapterView* fText;
 	ChapterView* fText2;
-	BView* fScroll2;
+	BView* fPane2;
+	VerseMenu* fVerseMenu;
+	ChapterView* fTappedView = nullptr;
+	std::vector<Place> fBack;
+	std::vector<Place> fForward;
 	BMenu* fParallelMenu;
 	BMenu* fFontMenu;
 	BMenu* fSpacingMenu;

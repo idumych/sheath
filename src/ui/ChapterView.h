@@ -26,12 +26,16 @@ public:
 	static const uint32 kMsgLinkClicked = 'lnkc';
 	static const uint32 kMsgVerseMenu = 'vrsm';
 	static const uint32 kMsgScrolled = 'scrl';	// "verse" now at the top, "view" (pointer)
+	static const uint32 kMsgVerseTapped = 'vtap';	// a click on a verse: "verse", "view"
 
 	explicit ChapterView(const char* name);
 
 	// bookmarked: verse numbers drawn in the accent colour.
+	// title: shown above the text (the book name on its first chapter, else ""); chapter: the
+	// "— N —" marker (0 = none).
 	void SetChapter(const std::vector<sheath::VerseText>& verses, const ReadingStyle& style,
-		const std::set<int>& bookmarked = std::set<int>());
+		const std::set<int>& bookmarked = std::set<int>(), const std::string& title = "",
+		int chapter = 0);
 	// A dictionary entry. strongsPrefix 'G'/'H': link "see GREEK for 5689" etc. (0 = don't).
 	void SetEntry(const std::string& xhtml, const ReadingStyle& style, char strongsPrefix = 0);
 	void SetMessageText(const char* text, const ReadingStyle& style);	// "no modules" etc.
@@ -50,9 +54,12 @@ public:
 	void ScrollTo(BPoint where) override;
 	int VerseAtTop() const;
 	int VerseAt(BPoint where) const;		// 0 if none
+	void SelectVerse(int verse);			// highlights a verse (as the selection)
+	void ClearSelection() { Select(0, 0); }
 
 	void Copy(BClipboard* clipboard) override;
 	void MouseDown(BPoint where) override;
+	void MouseUp(BPoint where) override;
 	void MouseMoved(BPoint where, uint32 transit, const BMessage* drag) override;
 
 private:
@@ -70,4 +77,10 @@ private:
 	bool fSyncing = false;
 	int fLastTopVerse = 0;
 	int fRestoreVerse = 0;
+	bool fCentered = false;		// chapters sit in a centred column; entries don't
+	float fColumnSize = 16;		// the text size the column width follows
+	BPoint fDownPoint;
+	int fDownVerse = 0;
+
+	void UpdateColumn();
 };
