@@ -44,9 +44,12 @@ void EntryWindow::Show(const std::string& title, const std::string& xhtml, const
 	sWindow->fText->SetEntry(xhtml, entryStyle, strongs.empty() ? 0 : strongs[0]);
 	sWindow->fStrongs = strongs;
 	sWindow->fTarget = target;
-	if (strongs.empty() && !sWindow->fFind->IsHidden())
+	// IsHidden(view) asks about the button itself: plain IsHidden() is also true while the
+	// window is hidden, before its first Show(), so the button would never be hidden.
+	bool hidden = sWindow->fFind->IsHidden(sWindow->fFind);
+	if (strongs.empty() && !hidden)
 		sWindow->fFind->Hide();
-	else if (!strongs.empty() && sWindow->fFind->IsHidden())
+	else if (!strongs.empty() && hidden)
 		sWindow->fFind->Show();
 	if (sWindow->IsHidden())
 		sWindow->BWindow::Show();

@@ -1106,7 +1106,9 @@ void ReaderWindow::ShowDefinitions(int verse)
 		xhtml += "<h3>" + EscapeXml(w.text.empty() ? w.strongs : w.text + " \xC2\xB7 " + w.strongs)
 			+ "</h3>";
 		if (!w.morph.empty()) {
-			std::string code = w.morph.substr(w.morph.find(':') + 1);
+			// The target is "robinson:PREP:PREP" (SWORD's type, which repeats the code,
+			// then the code).
+			std::string code = w.morph.substr(w.morph.rfind(':') + 1);
 			std::string entry = w.morph.compare(0, 9, "robinson:") == 0
 				? fLibrary->Entry("Robinson", code, fState.options) : "";
 			xhtml += "<p><b>" + EscapeXml(code) + "</b>" + (entry.empty() ? "" : " " + entry)
