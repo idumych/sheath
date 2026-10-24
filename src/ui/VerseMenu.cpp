@@ -15,8 +15,11 @@ namespace {
 
 rgb_color CardColor()
 {
-	rgb_color back = ui_color(B_PANEL_BACKGROUND_COLOR);
-	return tint_color(back, B_DARKEN_1_TINT);
+	// Between the panel and the page colour: a light card, like LinBible's.
+	rgb_color panel = ui_color(B_PANEL_BACKGROUND_COLOR);
+	rgb_color page = ui_color(B_DOCUMENT_BACKGROUND_COLOR);
+	return make_color((panel.red + page.red) / 2, (panel.green + page.green) / 2,
+		(panel.blue + page.blue) / 2);
 }
 
 }	// namespace
@@ -194,6 +197,9 @@ VerseMenu::VerseMenu()
 	fControls[3] = copy;
 	fControls[4] = compare;
 	fControls[5] = fDefinitions;
+	fDefinitions->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+	// No wider than a comfortable text column; the window centres it.
+	SetExplicitMaxSize(BSize(680, B_SIZE_UNSET));
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_HALF_ITEM_SPACING)
 		.SetInsets(B_USE_ITEM_INSETS, B_USE_HALF_ITEM_INSETS, B_USE_ITEM_INSETS,
@@ -231,7 +237,6 @@ void VerseMenu::Draw(BRect updateRect)
 	FillRect(Bounds());
 	SetHighColor(CardColor());
 	BRect card = Bounds();
-	card.InsetBy(4, 0);
 	card.top += 4;
 	card.bottom += 8;
 	FillRoundRect(card, 8, 8);

@@ -243,8 +243,10 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	fPrevButton->SetToolTip("Previous chapter");
 	fNextButton = new BButton("next", "\xE2\x8F\xAD", new BMessage(kMsgNext));	// ⏭
 	fNextButton->SetToolTip("Next chapter");
-	for (BButton* b : {fBackButton, fForwardButton, fPrevButton, fNextButton})
-		b->SetExplicitMaxSize(BSize(b->MinSize().height * 1.4f, B_SIZE_UNSET));
+	for (BButton* b : {fBackButton, fForwardButton, fPrevButton, fNextButton}) {
+		float side = b->MinSize().height;
+		b->SetExplicitSize(BSize(side * 1.3f, side));
+	}
 	fRefControl = new HintField("ref", "Go to" "\xE2\x80\xA6" " (e.g. John 3:16)",
 		new BMessage(kMsgGoRef));
 	BScrollView* refBorder = new BScrollView("ref border", fRefControl, 0, false, false,
@@ -253,6 +255,18 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 	fBookmarksButton = new BButton("bookmarks", "Bookmarks", new BMessage(kMsgBookmarksButton));
 	BButton* downloadButton = new BButton("download", "Download",
 		new BMessage(kMsgInstallWindow));
+	for (BButton* b : {searchButton, fBookmarksButton, downloadButton})
+		b->SetExplicitMaxSize(b->MinSize());
+	// The Bible chooser takes the spare width, as in LinBible; book and chapter stay compact.
+	fDocField->SetExplicitMinSize(BSize(be_plain_font->StringWidth("MMMMMMMMMM"), B_SIZE_UNSET));
+	fDocField->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+	fBookField->SetExplicitMinSize(BSize(be_plain_font->StringWidth("1 Thessalonians") + 30,
+		B_SIZE_UNSET));
+	fBookField->SetExplicitMaxSize(fBookField->ExplicitMinSize());
+	fChapterField->SetExplicitMinSize(BSize(be_plain_font->StringWidth("150") + 34,
+		B_SIZE_UNSET));
+	fChapterField->SetExplicitMaxSize(fChapterField->ExplicitMinSize());
+	refBorder->SetExplicitMinSize(BSize(fRefControl->PreferredSize().width + 4, B_SIZE_UNSET));
 
 	fHeader = new PaneHeader("header", nullptr, nullptr);
 	fText = new ChapterView("text");
@@ -277,19 +291,23 @@ ReaderWindow::ReaderWindow(BRect frame, SwordLibrary* library, const ReaderState
 			.SetInsets(B_USE_HALF_ITEM_INSETS)
 			.Add(fBackButton)
 			.Add(fForwardButton)
-			.Add(fDocField, 2.0f)
-			.Add(fBookField, 1.5f)
+			.Add(fDocField, 3.0f)
+			.Add(fBookField)
 			.Add(fChapterField)
 			.Add(fPrevButton)
 			.Add(fNextButton)
-			.Add(refBorder, 2.0f)
-			.AddGlue(0.5f)
+			.Add(refBorder, 1.0f)
+			.AddGlue(1.0f)
 			.Add(searchButton)
 			.Add(fBookmarksButton)
 			.Add(downloadButton)
 		.End()
 		.Add(split)
-		.Add(fVerseMenu);
+		.AddGroup(B_HORIZONTAL, 0)
+			.AddGlue()
+			.Add(fVerseMenu, 2.0f)
+			.AddGlue()
+		.End();
 	fPane2->Hide();
 	fVerseMenu->Hide();
 	fHeader2->SetTarget(this);

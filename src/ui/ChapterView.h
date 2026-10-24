@@ -54,8 +54,9 @@ public:
 	void ScrollTo(BPoint where) override;
 	int VerseAtTop() const;
 	int VerseAt(BPoint where) const;		// 0 if none
-	void SelectVerse(int verse);			// highlights a verse (as the selection)
-	void ClearSelection() { Select(0, 0); }
+	void SelectVerse(int verse);			// highlights a verse in grey (the tapped verse)
+	void ClearSelection();					// removes that highlight and the selection
+	void Draw(BRect updateRect) override;
 
 	void Copy(BClipboard* clipboard) override;
 	void MouseDown(BPoint where) override;
@@ -72,6 +73,7 @@ private:
 	void Render(RunBuilder& builder);
 
 	std::vector<LinkRange> fLinks;
+	int32 fHighlightStart = -1, fHighlightEnd = -1;
 	std::vector<VerseStart> fVerses;
 	bool fNotify = false;
 	bool fSyncing = false;

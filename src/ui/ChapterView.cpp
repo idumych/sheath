@@ -5,6 +5,7 @@
 #include <Font.h>
 #include <Looper.h>
 #include <Message.h>
+#include <Region.h>
 #include <ScrollBar.h>
 #include <Window.h>
 
@@ -343,9 +344,42 @@ void ChapterView::SelectVerse(int verse)
 		const char* text = Text();
 		while (end > start && (text[end - 1] == '\n' || text[end - 1] == ' '))
 			end--;
-		Select(start, end);
+		Select(start, start);
+		fHighlightStart = start;
+		fHighlightEnd = end;
+		Invalidate();
 		return;
 	}
+}
+
+
+void ChapterView::ClearSelection()
+{
+	Select(0, 0);
+	if (fHighlightStart >= 0) {
+		fHighlightStart = fHighlightEnd = -1;
+		Invalidate();
+	}
+}
+
+
+void ChapterView::Draw(BRect updateRect)
+{
+	BTextView::Draw(updateRect);
+	if (fHighlightStart < 0)
+		return;
+	// A grey band behind the tapped verse, as LinBible marks it, rather than the inverted
+	// selection. Drawn over the text with MIN (light background) or MAX (dark background),
+	// so it darkens or lightens only the background and leaves the glyphs as they are.
+	BRegion region;
+	GetTextRegion(fHighlightStart, fHighlightEnd, &region);
+	rgb_color back = ViewColor();
+	bool dark = back.Brightness() < 128;
+	PushState();
+	SetDrawingMode(dark ? B_OP_MAX : B_OP_MIN);
+	SetHighColor(dark ? tint_color(back, B_LIGHTEN_1_TINT) : tint_color(back, B_DARKEN_1_TINT));
+	FillRegion(&region);
+	PopState();
 }
 
 
@@ -354,6 +388,7 @@ void ChapterView::Render(RunBuilder& builder)
 	// Replacing the text scrolls to the top; that isn't the user scrolling, so the parallel
 	// view must not follow it.
 	fSyncing = true;
+	fHighlightStart = fHighlightEnd = -1;
 	builder.ApplyTo(this);
 	ScrollToOffset(0);
 	fLastTopVerse = VerseAtTop();
